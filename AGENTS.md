@@ -20,11 +20,15 @@ APIs, shared by multiple applications. Each domain lives in its own package bene
 | Booking records | `io.github.castab.commerce.booking` | Immutable booking-to-customer association and separate operational contact and location records. |
 | Financial documents | `io.github.castab.commerce.financial` | Concrete, library-owned immutable value types (`Estimate`, `Quote`, `Invoice`) whose invariants the library enforces. |
 | Payment reconciliation | `io.github.castab.commerce.payment` | Concrete, library-owned immutable records (payments, allocations, allocation reversals, refunds, refund allocations) and reconciliation derived from records the application supplies. |
+| Principal authorization | `io.github.castab.commerce.staff` | Human and service identities, distinct UUID-backed principal IDs, extensible roles and permissions, and additive role-based permission resolution. |
+| Payment adapter contract | `io.github.castab.commerce.payment.adapter` | Provider-neutral instructions, observations, capabilities, event receipts, and pure decisions at the external-provider boundary. |
 
 The styles are deliberate and not interchangeable. Read the rules for the domain you
 are changing: [Booking lifecycle domain](#booking-lifecycle-domain),
-[Financial document domain](#financial-document-domain), and
-[Payment reconciliation domain](#payment-reconciliation-domain). The build, dependency,
+[Financial document domain](#financial-document-domain),
+[Payment reconciliation domain](#payment-reconciliation-domain) (including the adapter
+contract), and
+[Principal authorization domain](#principal-authorization-domain). The build, dependency,
 toolchain, and publication rules apply to the whole repository.
 
 Dependencies between domains are fixed:
@@ -34,6 +38,8 @@ booking.lifecycle    imports nothing from the other domains, and nothing imports
 booking ──imports──→ customer
 financial ──imports──→ customer
 payment ──imports──→ financial   (FinancialDocument, FinancialDocumentReference, Money)
+payment.adapter ──imports──→ payment, financial   (Money)
+staff                 independent of the other domains
 ```
 
 - The booking lifecycle and the financial documents never import each other. Applications
@@ -61,13 +67,17 @@ booking lifecycle itself, it probably does not belong in the booking lifecycle A
 | `src/main/kotlin/io/github/castab/commerce/customer/Customer.kt` | Minimal customer identity and contact value objects. |
 | `src/main/kotlin/io/github/castab/commerce/booking/` | Booking identity association, contacts, postal address, and location. |
 | `src/main/kotlin/io/github/castab/commerce/payment/` | The payment reconciliation API: `PaymentMethod.kt`, `ExternalPaymentReference.kt`, `ExternalRefundReference.kt`, `PaymentRecord.kt`, `PaymentAllocation.kt`, `PaymentAllocationReversal.kt`, `RefundRecord.kt`, `RefundAllocation.kt`, `PaymentReconciliation.kt` (payment-level reconciliation and the shared validation helpers), and `FinancialDocumentReconciliation.kt`. |
+| `src/main/kotlin/io/github/castab/commerce/payment/adapter/` | The transport-neutral payment adapter contract and pure validation of provider observations. |
 | `src/main/kotlin/io/github/castab/commerce/financial/` | The financial document API: `FinancialDocument.kt` (the sealed class, its three stages, and change application), `Version.kt`, `Money.kt`, `LineItem.kt`, `ChangeOrder.kt`, `FinancialDocumentReference.kt`, and `FinancialDocumentHistory.kt` (the history SPI and its lookup extensions). |
+| `src/main/kotlin/io/github/castab/commerce/staff/` | Human and service principal identity and authorization: `Principal.kt`, `User.kt`, `ServiceIdentity.kt`, and `Authorization.kt`. |
 | `src/test/kotlin/io/github/castab/commerce/booking/lifecycle/BookingLifecycleSpec.kt` | Kotest `FunSpec` for the booking lifecycle contract. |
 | `src/test/kotlin/io/github/castab/commerce/booking/lifecycle/fixtures/TestBookingModels.kt` | Test-only "application-owned" booking models. |
 | `src/test/kotlin/io/github/castab/commerce/financial/*Spec.kt` | Kotest specs for the financial domain: `FinancialDocumentSpec`, `ChangeOrderSpec`, `FinancialDocumentHistorySpec`, `LineItemSpec`, `MoneySpec`, `VersionSpec`. |
 | `src/test/kotlin/io/github/castab/commerce/financial/fixtures/TestFinancialModels.kt` | Test-only money and line item helpers and an in-memory `FinancialDocumentHistory`. |
 | `src/test/kotlin/io/github/castab/commerce/payment/*Spec.kt` | Kotest specs for the payment domain: `PaymentRecordSpec`, `PaymentAllocationSpec`, `PaymentAllocationReversalSpec`, `RefundRecordSpec`, `RefundAllocationSpec`, `PaymentReconciliationSpec`, `FinancialDocumentReconciliationSpec`, and `PaymentDomainSpec` (the end-to-end history and the reflection shape tests). |
 | `src/test/kotlin/io/github/castab/commerce/payment/fixtures/TestPaymentModels.kt` | Test-only payment, document, and numeric-comparison helpers. |
+| `src/test/kotlin/io/github/castab/commerce/payment/adapter/PaymentAdapterContractSpec.kt` | Kotest coverage for the provider-neutral adapter contract and processing decisions. |
+| `src/test/kotlin/io/github/castab/commerce/staff/AuthorizationSpec.kt` | Kotest coverage for staff values, resolver behavior, and fail-closed authorization. |
 | `build.gradle.kts`, `settings.gradle.kts`, `gradle.properties` | Single-module build with the Java 25 toolchain and the Maven publication. |
 | `gradle/libs.versions.toml` | Version catalog. |
 | `.github/workflows/ci.yml` | CI: build and test on Java 25 for pull requests and pushes to `main`. |
@@ -413,6 +423,36 @@ reconciliation from those records. It answers "what did we receive, where was it
 what was corrected, what was returned, and what is the balance?". It does not answer
 "which ledger accounts were debited?".
 
+The sibling `payment.adapter` package is the deliberate provider boundary. Its
+`PreparePayment`, `PaymentPrepared`, `RequestRefund`, observations, and optional checkout
+URI do not alter a payment or refund record. `AuthorizedPayment` represents the consuming application's
+already-approved amount, including for observation-only providers. The adapter package
+may describe a provider operation without turning pending activity into a money-movement
+record. The no-checkout rule below continues to apply to core payment records and
+reconciliation; only an optional provider-hosted navigation URI belongs in this adapter
+contract.
+
+Adapter implementations authenticate provider input and translate it. This library does
+not define a transport, SDK, signature check, database, or provider-specific status.
+`PaymentProviderId` is extensible; existing `ExternalPaymentReference` and
+`ExternalRefundReference` remain the provider object references. Their provider strings
+must match `PaymentProviderId.value` when used in this contract. A
+`ProviderEventReference` instead identifies one event by `(provider, eventId)`; one
+provider object may produce many events. Receipts hold minimal metadata, never raw
+provider payloads. A consuming application must persist an accepted receipt and its
+corresponding payment/refund fact or request-status effect atomically, with uniqueness on
+the event pair, application-owned record ID, and provider object reference. The pure processing
+functions receive application-supplied records and receipts and cannot enforce storage
+uniqueness or transaction isolation themselves.
+
+Provider success must match the consuming application's authorized identity, currency, and numeric
+amount. Refund success must match the requested refund and stay within the payment's
+remaining refundable amount. Failures create no payment or refund money-movement record.
+An already completed payment or refund cannot be undone by a failure observation.
+Capability checks apply before outbound initiation or refund requests; they do not
+invalidate an authenticated success observation if the adapter's advertised capabilities
+later change. Keep this boundary provider-neutral and transport-neutral.
+
 The separation of concepts, which code, KDoc, README, and tests must all agree on:
 
 ```text
@@ -514,6 +554,34 @@ fun reverse(a: PaymentAllocation): RefundRecord                 // wrong: a reve
 enum class PaymentMethod { STRIPE, PAYPAL }                     // wrong: a processor is not a method
 val PaymentRecord.status: PaymentStatus                         // wrong: status is derived by the application
 ```
+
+# Principal authorization domain
+
+These rules govern `io.github.castab.commerce.staff`. A `User` is a human staff member;
+`ServiceIdentity` is a non-human software caller. Both implement `Principal`, with a
+shared `PrincipalStatus` and role assignments. Their UUID-backed `UserId` and
+`ServiceId` are distinct `PrincipalId` types. The package is independent of the booking,
+customer, financial, and payment packages. Neither principal holds passwords, API keys,
+tokens, certificates, or other authentication data. Applications authenticate callers
+before supplying a `PrincipalId` to authorization. `UserStatus` remains a Kotlin alias
+for `PrincipalStatus` for source compatibility.
+
+- `RoleKey` and `PermissionKey` are open-ended values, never enums. Commerce-defined
+  role keys are conventions, not hard-coded grants. Applications supply role definitions.
+- Operations ordinarily check permissions, not role names or principal types.
+  `PrincipalId.can` takes an explicit `PermissionResolver`; do not hide resolver state
+  in a singleton or locator.
+- `PrincipalResolver` and `RoleResolver` are application-implemented ports.
+  `UserResolver` remains a human-specific port, but authorization uses
+  `PrincipalResolver`. The standard `RoleBasedPermissionResolver` unions grants from
+  matching resolved role definitions. It returns no permissions for missing or disabled
+  principals or mismatched identities, and skips missing or mismatched role definitions.
+  A service has no implicit trust bypass. No explicit deny or role precedence exists.
+- Role assignments and definitions contain no scope in this version. Do not introduce
+  location scoping, a policy engine, or authentication/session logic incidentally.
+- Future actor attribution may refer to `PrincipalId`, preserving whether a human or
+  service performed the action. Existing commerce records do not gain actor fields as
+  part of this domain.
 
 # Repository-wide rules
 
