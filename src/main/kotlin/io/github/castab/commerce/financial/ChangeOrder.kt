@@ -17,8 +17,9 @@ import java.util.UUID
  * The list of changes is copied on construction, so later changes to the caller's list do
  * not affect the change order. A change order must contain at least one change.
  */
-class ChangeOrder(changes: List<Change>) {
-
+class ChangeOrder(
+    changes: List<Change>,
+) {
     /** The changes to apply, in order. Never empty. */
     val changes: List<Change> = changes.toImmutableList()
 
@@ -34,7 +35,6 @@ class ChangeOrder(changes: List<Change>) {
 
     /** One step of a [ChangeOrder]. */
     sealed interface Change {
-
         /**
          * Appends [lineItem] to the document.
          *

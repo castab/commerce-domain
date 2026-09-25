@@ -7,7 +7,9 @@ import io.github.castab.commerce.customer.PhoneNumber
 import java.util.UUID
 
 /** Identity of one independently stored booking contact. */
-data class BookingContactId(val value: UUID)
+data class BookingContactId(
+    val value: UUID,
+)
 
 /** Operational contact for exactly one booking; never embeds a booking or customer. */
 sealed interface BookingContact {

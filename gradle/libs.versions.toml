@@ -2,6 +2,7 @@
 kotlin = "2.4.20"
 kotest = "6.2.5"
 mockk = "1.14.11"
+ktlint-gradle = "14.2.0"
 
 [libraries]
 kotest-runner-junit5 = { module = "io.kotest:kotest-runner-junit5", version.ref = "kotest" }
@@ -10,3 +11,4 @@ mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint-gradle" }

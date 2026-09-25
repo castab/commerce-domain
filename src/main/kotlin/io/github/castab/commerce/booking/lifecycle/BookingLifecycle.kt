@@ -66,7 +66,6 @@ package io.github.castab.commerce.booking.lifecycle
  * exactly one of them.
  */
 sealed interface BookingLifecycle {
-
     /**
      * Classification of the phases in which a booking lifecycle has not yet reached an
      * outcome.
@@ -75,7 +74,6 @@ sealed interface BookingLifecycle {
      * may legally be cancelled.
      */
     sealed interface Active : BookingLifecycle {
-
         /**
          * An inquiry or estimate request that has not yet become an official quote.
          *
@@ -90,7 +88,6 @@ sealed interface BookingLifecycle {
          * selections, notes, estimates, or a requested date). The lifecycle requires none of it.
          */
         interface InitialRequest : Active {
-
             /**
              * Represents the legal lifecycle transition from an initial request to an issued
              * quote.
@@ -128,7 +125,6 @@ sealed interface BookingLifecycle {
          * application-owned data.
          */
         interface Quote : Active {
-
             /**
              * Represents the legal lifecycle transition from a quoted opportunity to a
              * confirmed booking.
@@ -164,7 +160,6 @@ sealed interface BookingLifecycle {
          * invoice has changed any number of times still inhabits the `Booked` phase.
          */
         interface Booked : Active {
-
             /**
              * Represents the legal lifecycle transition from a confirmed booking to a
              * completed outcome, meaning the booked service or event was fulfilled.
@@ -200,7 +195,6 @@ sealed interface BookingLifecycle {
      * booking lifecycle.
      */
     sealed interface Terminal : BookingLifecycle {
-
         /**
          * A booking lifecycle that ended without fulfillment.
          *

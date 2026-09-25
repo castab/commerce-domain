@@ -60,7 +60,6 @@ class RefundAllocation private constructor(
     /** When the refunded amount was attributed to the allocation. */
     val allocatedAt: Instant,
 ) {
-
     init {
         require(amount.isPositive()) { "Refund allocation $id must have a positive amount, but was $amount" }
     }
@@ -92,7 +91,6 @@ class RefundAllocation private constructor(
             "paymentAllocationReference=$paymentAllocationReference, amount=$amount, allocatedAt=$allocatedAt)"
 
     companion object {
-
         /**
          * Records that [amount] of [refund] unwinds value applied by [allocation]. Stores
          * `refund.id` and `allocation.id`, never the records themselves, and modifies

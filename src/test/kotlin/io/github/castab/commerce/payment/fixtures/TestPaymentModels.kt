@@ -1,10 +1,10 @@
 package io.github.castab.commerce.payment.fixtures
 
-import io.github.castab.commerce.financial.fixtures.TEST_CUSTOMER_ID
 import io.github.castab.commerce.financial.ChangeOrder
 import io.github.castab.commerce.financial.FinancialDocument
 import io.github.castab.commerce.financial.LineItem
 import io.github.castab.commerce.financial.Money
+import io.github.castab.commerce.financial.fixtures.TEST_CUSTOMER_ID
 import io.github.castab.commerce.financial.fixtures.lineItem
 import io.github.castab.commerce.payment.ExternalPaymentReference
 import io.github.castab.commerce.payment.PaymentMethod
@@ -32,20 +32,32 @@ fun payment(
 ): PaymentRecord = PaymentRecord(id, amount, method, RECEIVED_AT, externalReference)
 
 /** One flat-priced, untaxed line, so the document total is exactly [total]. */
-fun flatLine(total: Money, description: String = "Services", id: UUID = UUID.randomUUID()): LineItem =
-    lineItem(description, quantity = null, price = total, taxAmount = Money.zero(total.currency), id = id)
+fun flatLine(
+    total: Money,
+    description: String = "Services",
+    id: UUID = UUID.randomUUID(),
+): LineItem = lineItem(description, quantity = null, price = total, taxAmount = Money.zero(total.currency), id = id)
 
-fun estimateTotalling(total: Money, id: UUID = UUID.randomUUID()): FinancialDocument.Estimate =
-    FinancialDocument.Estimate.create(id, listOf(flatLine(total)), customerId = TEST_CUSTOMER_ID)
+fun estimateTotalling(
+    total: Money,
+    id: UUID = UUID.randomUUID(),
+): FinancialDocument.Estimate = FinancialDocument.Estimate.create(id, listOf(flatLine(total)), customerId = TEST_CUSTOMER_ID)
 
-fun quoteTotalling(total: Money, id: UUID = UUID.randomUUID()): FinancialDocument.Quote =
-    FinancialDocument.Quote.create(id, listOf(flatLine(total)), customerId = TEST_CUSTOMER_ID)
+fun quoteTotalling(
+    total: Money,
+    id: UUID = UUID.randomUUID(),
+): FinancialDocument.Quote = FinancialDocument.Quote.create(id, listOf(flatLine(total)), customerId = TEST_CUSTOMER_ID)
 
-fun invoiceTotalling(total: Money, id: UUID = UUID.randomUUID()): FinancialDocument.Invoice =
-    FinancialDocument.Invoice.create(id, listOf(flatLine(total)), customerId = TEST_CUSTOMER_ID)
+fun invoiceTotalling(
+    total: Money,
+    id: UUID = UUID.randomUUID(),
+): FinancialDocument.Invoice = FinancialDocument.Invoice.create(id, listOf(flatLine(total)), customerId = TEST_CUSTOMER_ID)
 
 /** A change order that replaces every line of [document] with one flat line of [total]. */
-fun retotal(document: FinancialDocument, total: Money): ChangeOrder =
+fun retotal(
+    document: FinancialDocument,
+    total: Money,
+): ChangeOrder =
     ChangeOrder(
         document.lineItems.map { ChangeOrder.Change.RemoveLineItem(it.id) } +
             ChangeOrder.Change.AddLineItem(flatLine(total)),

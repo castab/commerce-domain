@@ -54,7 +54,6 @@ class RefundRecord private constructor(
      */
     val externalReference: ExternalRefundReference?,
 ) {
-
     init {
         require(amount.isPositive()) { "Refund $id must have a positive amount, but was $amount" }
     }
@@ -88,7 +87,6 @@ class RefundRecord private constructor(
             "refundedAt=$refundedAt, externalReference=$externalReference)"
 
     companion object {
-
         /**
          * Records that [amount] of [payment] was returned to the payer. The refund stores
          * `payment.id`, never the payment itself. [payment] is not modified.

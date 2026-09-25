@@ -34,52 +34,53 @@ import java.util.UUID
  *
  * @throws IllegalArgumentException if [amount] is not strictly positive.
  */
-class PaymentRecord @JvmOverloads constructor(
-    /** The identity of this payment, chosen by the application. */
-    val id: UUID,
-    /** The money received. Strictly positive. Its currency is the payment's [currency]. */
-    val amount: Money,
-    /** The instrument the money was received through. */
-    val method: PaymentMethod,
-    /** When the money was received. */
-    val receivedAt: Instant,
-    /**
-     * The payment's identity in an external system, such as a processor's transaction id,
-     * or `null` when there is none, as for cash, a check, or a manually recorded payment.
-     */
-    val externalReference: ExternalPaymentReference? = null,
-) {
+class PaymentRecord
+    @JvmOverloads
+    constructor(
+        /** The identity of this payment, chosen by the application. */
+        val id: UUID,
+        /** The money received. Strictly positive. Its currency is the payment's [currency]. */
+        val amount: Money,
+        /** The instrument the money was received through. */
+        val method: PaymentMethod,
+        /** When the money was received. */
+        val receivedAt: Instant,
+        /**
+         * The payment's identity in an external system, such as a processor's transaction id,
+         * or `null` when there is none, as for cash, a check, or a manually recorded payment.
+         */
+        val externalReference: ExternalPaymentReference? = null,
+    ) {
+        init {
+            require(amount.isPositive()) { "Payment $id must have a positive amount, but was $amount" }
+        }
 
-    init {
-        require(amount.isPositive()) { "Payment $id must have a positive amount, but was $amount" }
+        /** The currency of the payment: the currency of [amount]. */
+        val currency: Currency
+            get() = amount.currency
+
+        override fun equals(other: Any?): Boolean =
+            this === other ||
+                other is PaymentRecord &&
+                other.id == id &&
+                other.amount == amount &&
+                other.method == method &&
+                other.receivedAt == receivedAt &&
+                other.externalReference == externalReference
+
+        override fun hashCode(): Int {
+            var result = id.hashCode()
+            result = 31 * result + amount.hashCode()
+            result = 31 * result + method.hashCode()
+            result = 31 * result + receivedAt.hashCode()
+            result = 31 * result + (externalReference?.hashCode() ?: 0)
+            return result
+        }
+
+        override fun toString(): String =
+            "PaymentRecord(id=$id, amount=$amount, method=$method, receivedAt=$receivedAt, " +
+                "externalReference=$externalReference)"
     }
-
-    /** The currency of the payment: the currency of [amount]. */
-    val currency: Currency
-        get() = amount.currency
-
-    override fun equals(other: Any?): Boolean =
-        this === other ||
-            other is PaymentRecord &&
-            other.id == id &&
-            other.amount == amount &&
-            other.method == method &&
-            other.receivedAt == receivedAt &&
-            other.externalReference == externalReference
-
-    override fun hashCode(): Int {
-        var result = id.hashCode()
-        result = 31 * result + amount.hashCode()
-        result = 31 * result + method.hashCode()
-        result = 31 * result + receivedAt.hashCode()
-        result = 31 * result + (externalReference?.hashCode() ?: 0)
-        return result
-    }
-
-    override fun toString(): String =
-        "PaymentRecord(id=$id, amount=$amount, method=$method, receivedAt=$receivedAt, " +
-            "externalReference=$externalReference)"
-}
 
 /** Whether this amount is greater than zero, compared numerically rather than by scale. */
 @JvmSynthetic

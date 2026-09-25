@@ -43,7 +43,6 @@ data class LineItem(
     val price: Money,
     val taxAmount: Money,
 ) {
-
     init {
         require(description.isNotBlank()) { "Line item $id must have a non-blank description" }
         require(price.currency == taxAmount.currency) {

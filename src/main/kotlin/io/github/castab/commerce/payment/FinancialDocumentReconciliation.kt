@@ -49,7 +49,6 @@ class FinancialDocumentReconciliation private constructor(
     /** The sum of every refund allocation that unwinds those allocations. */
     val refundAllocations: Money,
 ) {
-
     /**
      * The money currently applied to the document: [grossAllocated] minus
      * [allocationReversals] and [refundAllocations].
@@ -87,7 +86,6 @@ class FinancialDocumentReconciliation private constructor(
             "refundAllocations=$refundAllocations, netApplied=$netApplied, balance=$balance)"
 
     companion object {
-
         /**
          * Reconciles the lineage of [document] against the supplied records, using
          * [document]'s total as the amount owed.

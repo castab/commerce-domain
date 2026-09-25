@@ -22,12 +22,11 @@ import java.util.UUID
  * exists, is the persistence layer's responsibility and is not part of this interface.
  */
 interface FinancialDocumentHistory {
-
     /**
      * Returns the snapshot identified by [reference], or `null` if it is not stored.
      *
- * A returned snapshot must have exactly the referenced id and version. The lookup
- * extensions also verify the customer identity against the requesting snapshot.
+     * A returned snapshot must have exactly the referenced id and version. The lookup
+     * extensions also verify the customer identity against the requesting snapshot.
      */
     fun retrieveVersion(reference: FinancialDocumentReference): FinancialDocument?
 
@@ -60,7 +59,10 @@ fun FinancialDocument.retrievePreviousVersion(from: FinancialDocumentHistory): F
  *
  * @throws IllegalStateException if [from] returns a different reference or customer.
  */
-fun FinancialDocument.retrieveVersion(version: Version, from: FinancialDocumentHistory): FinancialDocument? {
+fun FinancialDocument.retrieveVersion(
+    version: Version,
+    from: FinancialDocumentHistory,
+): FinancialDocument? {
     val reference = FinancialDocumentReference(id, version)
     return from.retrieveVersion(reference).checkMatches(reference, customerId)
 }
@@ -81,7 +83,10 @@ fun FinancialDocument.retrieveLatestVersion(from: FinancialDocumentHistory): Fin
     return latest
 }
 
-private fun FinancialDocument?.checkMatches(reference: FinancialDocumentReference, customerId: CustomerId): FinancialDocument? {
+private fun FinancialDocument?.checkMatches(
+    reference: FinancialDocumentReference,
+    customerId: CustomerId,
+): FinancialDocument? {
     check(this == null || (this.reference == reference && this.customerId == customerId)) {
         "History returned ${this?.reference} for customer ${this?.customerId} " +
             "when asked for $reference for customer $customerId"

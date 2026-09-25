@@ -3,7 +3,9 @@ package io.github.castab.commerce.booking
 import java.util.UUID
 
 /** Identity of one independently stored booking location. */
-data class BookingLocationId(val value: UUID)
+data class BookingLocationId(
+    val value: UUID,
+)
 
 /** Postal or service address; field formats are intentionally jurisdiction-neutral. */
 data class PostalAddress(

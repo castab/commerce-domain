@@ -48,7 +48,6 @@ class PaymentAllocationReversal private constructor(
     /** Why the allocation was reversed, for auditing, or `null`. Never blank. */
     val reason: String?,
 ) {
-
     init {
         require(amount.isPositive()) {
             "Payment allocation reversal $id must have a positive amount, but was $amount"
@@ -85,7 +84,6 @@ class PaymentAllocationReversal private constructor(
             "amount=$amount, reversedAt=$reversedAt, reason=$reason)"
 
     companion object {
-
         /**
          * Records that [amount] of [allocation] is reversed. The reversal stores
          * `allocation.id`, never the allocation itself. [allocation] is not modified.

@@ -14,7 +14,6 @@ package io.github.castab.commerce.payment
  * refund's method may differ from the method of the payment it refunds.
  */
 enum class PaymentMethod {
-
     /** Physical currency. */
     CASH,
 

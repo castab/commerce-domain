@@ -1824,8 +1824,23 @@ On Windows:
 ```
 
 `build` compiles the library, runs the full test suite, and assembles the main, sources,
-and javadoc jars. It does not publish anything and needs no GitHub credentials. Local
+and javadoc jars. It also runs ktlint checks. It does not publish anything and needs no GitHub credentials. Local
 builds use the version `0.0.0-SNAPSHOT`.
+
+### Kotlin formatting
+
+The build uses [ktlint-gradle](https://github.com/JLLeitschuh/ktlint-gradle) 14.2.0.
+Run `./gradlew ktlintCheck` to check Kotlin sources and Gradle Kotlin scripts, or
+`./gradlew ktlintFormat` to format them. On Windows use `./gradlew.bat` (or
+`.\gradlew.bat` in PowerShell). Plain text and HTML reports appear under
+`build/reports/ktlint/`. The normal `build` runs checks before main-source formatting;
+`compileKotlin` alone formats main sources before compilation.
+
+The root `.editorconfig` selects ktlint's official style and four-space indentation.
+To set a line limit later, add `max_line_length = 120` under `[*.{kt,kts}]` there.
+For a temporary baseline of existing violations, run `./gradlew ktlintGenerateBaseline`;
+the configured file is `config/ktlint/baseline.xml`. Baselines affect checking, while
+formatting still visits those files.
 
 The build cache is enabled. To make the tests run again rather than reuse cached results,
 add `--no-build-cache` (or run `./gradlew test --rerun`).

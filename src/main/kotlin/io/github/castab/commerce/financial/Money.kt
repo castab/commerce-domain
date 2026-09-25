@@ -21,7 +21,6 @@ data class Money(
     val amount: BigDecimal,
     val currency: Currency,
 ) {
-
     /**
      * The exact sum of this amount and [other].
      *
@@ -52,7 +51,6 @@ data class Money(
     override fun toString(): String = "${amount.toPlainString()} ${currency.currencyCode}"
 
     companion object {
-
         /** A zero amount in [currency]. */
         @JvmStatic
         fun zero(currency: Currency): Money = Money(BigDecimal.ZERO, currency)

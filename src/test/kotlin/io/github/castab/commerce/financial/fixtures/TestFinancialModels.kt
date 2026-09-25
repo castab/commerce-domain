@@ -44,7 +44,6 @@ fun lineItem(
  * constraint in a real store would.
  */
 class InMemoryFinancialDocumentHistory : FinancialDocumentHistory {
-
     private val snapshots = mutableMapOf<FinancialDocumentReference, FinancialDocument>()
 
     fun save(document: FinancialDocument) {
@@ -55,6 +54,5 @@ class InMemoryFinancialDocumentHistory : FinancialDocumentHistory {
 
     override fun retrieveVersion(reference: FinancialDocumentReference): FinancialDocument? = snapshots[reference]
 
-    override fun retrieveLatestVersion(id: UUID): FinancialDocument? =
-        snapshots.values.filter { it.id == id }.maxByOrNull { it.version }
+    override fun retrieveLatestVersion(id: UUID): FinancialDocument? = snapshots.values.filter { it.id == id }.maxByOrNull { it.version }
 }

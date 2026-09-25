@@ -17,7 +17,6 @@ class Version private constructor(
     /** The 1-based version number, suitable for storage in a persistence adapter. */
     val number: Int,
 ) : Comparable<Version> {
-
     /**
      * The version that immediately follows this one.
      *
@@ -38,7 +37,6 @@ class Version private constructor(
     override fun toString(): String = "v$number"
 
     companion object {
-
         /** The version of every newly created financial-document lineage: 1. */
         @JvmField
         val INITIAL: Version = Version(1)

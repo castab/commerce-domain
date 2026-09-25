@@ -65,7 +65,6 @@ class PaymentAllocation private constructor(
     /** When the money was applied. */
     val allocatedAt: Instant,
 ) {
-
     init {
         require(amount.isPositive()) { "Payment allocation $id must have a positive amount, but was $amount" }
     }
@@ -97,7 +96,6 @@ class PaymentAllocation private constructor(
             "financialDocumentReference=$financialDocumentReference, amount=$amount, allocatedAt=$allocatedAt)"
 
     companion object {
-
         /**
          * Records that [amount] of [payment] was applied to [financialDocument], as that
          * exact snapshot.
