@@ -88,7 +88,13 @@ publishing {
                     connection = "scm:git:https://github.com/$githubRepository.git"
                     developerConnection = "scm:git:ssh://git@github.com/$githubRepository.git"
                 }
-                // No <licenses> section: the repository does not declare a license yet.
+                licenses {
+                    license {
+                        name = "Apache-2.0"
+                        url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+                        distribution = "repo"
+                    }
+                }
             }
         }
     }

@@ -39,6 +39,7 @@ application defines whether, when, and how that transition occurs.**
 - [Releasing](#releasing)
 - [Current scope](#current-scope)
 - [Future direction](#future-direction)
+- [License](#license)
 
 ## Why this exists
 
@@ -764,3 +765,7 @@ GitHub Packages will keep working for existing consumers.
 
 For contributors and coding agents: the architectural rules for changing this repository
 are in [`AGENTS.md`](AGENTS.md).
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).

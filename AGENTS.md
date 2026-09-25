@@ -257,8 +257,8 @@ dependency just to support CI or publishing.
   tokens in repository files. Consumers keep theirs in `~/.gradle/gradle.properties`.
 - **Published artifacts:** the main jar, a sources jar, a javadoc jar (empty for now,
   because the sources are Kotlin-only and Dokka is not used), the POM, and Gradle module
-  metadata. The POM has no `<licenses>` section, because the repository has no license
-  yet. Do not invent one.
+  metadata. The POM declares the repository's license (Apache-2.0, see `LICENSE`). Keep
+  the two in sync.
 - **Test-only dependencies must not leak into the published library.** Check the
   generated POM or `runtimeClasspath` after dependency changes.
 - **Routine feature work should not modify publication behavior.** Keep
