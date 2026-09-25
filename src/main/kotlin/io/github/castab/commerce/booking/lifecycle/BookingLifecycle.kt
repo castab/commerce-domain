@@ -23,7 +23,7 @@ package io.github.castab.commerce.booking.lifecycle
  *
  * ```kotlin
  * data class CateringQuote(
- *     val customerId: UUID,
+ *     val customerId: Customer.Id,
  *     val total: BigDecimal,
  * ) : BookingLifecycle.Active.Quote {
  *     override fun toBooking(): CateringBooking = CateringBooking(customerId, total)
@@ -65,8 +65,7 @@ package io.github.castab.commerce.booking.lifecycle
  * intended to be mutually exclusive, and each concrete application type should implement
  * exactly one of them.
  */
-public sealed interface BookingLifecycle {
-
+sealed interface BookingLifecycle {
     /**
      * Classification of the phases in which a booking lifecycle has not yet reached an
      * outcome.
@@ -74,8 +73,7 @@ public sealed interface BookingLifecycle {
      * The active phases are exactly [InitialRequest], [Quote], and [Booked]. Each of them
      * may legally be cancelled.
      */
-    public sealed interface Active : BookingLifecycle {
-
+    sealed interface Active : BookingLifecycle {
         /**
          * An inquiry or estimate request that has not yet become an official quote.
          *
@@ -89,8 +87,7 @@ public sealed interface BookingLifecycle {
          * The implementing type owns all of its data (for example customer details,
          * selections, notes, estimates, or a requested date). The lifecycle requires none of it.
          */
-        public interface InitialRequest : Active {
-
+        interface InitialRequest : Active {
             /**
              * Represents the legal lifecycle transition from an initial request to an issued
              * quote.
@@ -99,7 +96,7 @@ public sealed interface BookingLifecycle {
              * data transformation necessary to perform the transition. Implementations may
              * declare a more specific return type.
              */
-            public fun toQuote(): Quote
+            fun toQuote(): Quote
 
             /**
              * Represents the legal lifecycle transition from an initial request to a cancelled
@@ -109,7 +106,7 @@ public sealed interface BookingLifecycle {
              * data transformation necessary to perform the transition. Implementations may
              * declare a more specific return type.
              */
-            public fun cancel(): Terminal.Cancelled
+            fun cancel(): Terminal.Cancelled
         }
 
         /**
@@ -127,8 +124,7 @@ public sealed interface BookingLifecycle {
          * number of times still inhabits the `Quote` phase. Revision history is
          * application-owned data.
          */
-        public interface Quote : Active {
-
+        interface Quote : Active {
             /**
              * Represents the legal lifecycle transition from a quoted opportunity to a
              * confirmed booking.
@@ -137,7 +133,7 @@ public sealed interface BookingLifecycle {
              * data transformation necessary to perform the transition. Implementations may
              * declare a more specific return type.
              */
-            public fun toBooking(): Booked
+            fun toBooking(): Booked
 
             /**
              * Represents the legal lifecycle transition from a quoted opportunity to a
@@ -147,7 +143,7 @@ public sealed interface BookingLifecycle {
              * data transformation necessary to perform the transition. Implementations may
              * declare a more specific return type.
              */
-            public fun cancel(): Terminal.Cancelled
+            fun cancel(): Terminal.Cancelled
         }
 
         /**
@@ -163,8 +159,7 @@ public sealed interface BookingLifecycle {
          * Invoice revisions and change orders are not lifecycle transitions. A model whose
          * invoice has changed any number of times still inhabits the `Booked` phase.
          */
-        public interface Booked : Active {
-
+        interface Booked : Active {
             /**
              * Represents the legal lifecycle transition from a confirmed booking to a
              * completed outcome, meaning the booked service or event was fulfilled.
@@ -173,7 +168,7 @@ public sealed interface BookingLifecycle {
              * data transformation necessary to perform the transition. Implementations may
              * declare a more specific return type.
              */
-            public fun complete(): Terminal.Completed
+            fun complete(): Terminal.Completed
 
             /**
              * Represents the legal lifecycle transition from a confirmed booking to a
@@ -183,7 +178,7 @@ public sealed interface BookingLifecycle {
              * data transformation necessary to perform the transition. Implementations may
              * declare a more specific return type.
              */
-            public fun cancel(): Terminal.Cancelled
+            fun cancel(): Terminal.Cancelled
         }
     }
 
@@ -199,8 +194,7 @@ public sealed interface BookingLifecycle {
      * orthogonal processes outside the booking lifecycle. They do not reopen or rewrite the
      * booking lifecycle.
      */
-    public sealed interface Terminal : BookingLifecycle {
-
+    sealed interface Terminal : BookingLifecycle {
         /**
          * A booking lifecycle that ended without fulfillment.
          *
@@ -211,7 +205,7 @@ public sealed interface BookingLifecycle {
          * cancelled booking. The protocol only records the outcome. A later refund does not
          * change it.
          */
-        public interface Cancelled : Terminal
+        interface Cancelled : Terminal
 
         /**
          * A booking whose booked service or event was fulfilled.
@@ -222,6 +216,6 @@ public sealed interface BookingLifecycle {
          * business processes, such as a complaint, a refund, or a dispute, reference the
          * booking.
          */
-        public interface Completed : Terminal
+        interface Completed : Terminal
     }
 }

@@ -37,30 +37,29 @@ import java.util.UUID
  * payment together stay within its amount depends on records this one cannot see;
  * [PaymentReconciliation] checks that.
  */
-public class RefundRecord private constructor(
+class RefundRecord private constructor(
     /** The identity of this refund, chosen by the application. */
-    public val id: UUID,
+    val id: UUID,
     /** The [PaymentRecord.id] of the payment whose money was returned. */
-    public val paymentReference: UUID,
+    val paymentReference: UUID,
     /** The money returned. Strictly positive, in the payment's currency. */
-    public val amount: Money,
+    val amount: Money,
     /** The instrument the money was returned through. May differ from the payment's. */
-    public val method: PaymentMethod,
+    val method: PaymentMethod,
     /** When the money was returned. */
-    public val refundedAt: Instant,
+    val refundedAt: Instant,
     /**
      * The refund's identity in an external system, such as a processor's refund id, or
      * `null` when there is none, as for a cash refund issued by hand.
      */
-    public val externalReference: ExternalRefundReference?,
+    val externalReference: ExternalRefundReference?,
 ) {
-
     init {
         require(amount.isPositive()) { "Refund $id must have a positive amount, but was $amount" }
     }
 
     /** The currency of the refund: the currency of [amount]. */
-    public val currency: Currency
+    val currency: Currency
         get() = amount.currency
 
     override fun equals(other: Any?): Boolean =
@@ -87,8 +86,7 @@ public class RefundRecord private constructor(
         "RefundRecord(id=$id, paymentReference=$paymentReference, amount=$amount, method=$method, " +
             "refundedAt=$refundedAt, externalReference=$externalReference)"
 
-    public companion object {
-
+    companion object {
         /**
          * Records that [amount] of [payment] was returned to the payer. The refund stores
          * `payment.id`, never the payment itself. [payment] is not modified.
@@ -100,7 +98,7 @@ public class RefundRecord private constructor(
          */
         @JvmStatic
         @JvmOverloads
-        public fun create(
+        fun create(
             id: UUID,
             payment: PaymentRecord,
             amount: Money,
@@ -126,7 +124,7 @@ public class RefundRecord private constructor(
          */
         @JvmStatic
         @JvmOverloads
-        public fun restore(
+        fun restore(
             id: UUID,
             paymentReference: UUID,
             amount: Money,

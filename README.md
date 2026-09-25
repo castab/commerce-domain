@@ -13,18 +13,18 @@ multiple applications can share.
 io.github.castab:commerce-domain:<version>
 ```
 
-It currently contains three domains:
+It currently contains customer identity, booking records and lifecycle, financial documents, and payment reconciliation:
 
 | Domain | Package | What it provides |
 |---|---|---|
 | [Booking lifecycle](#booking-lifecycle) | `io.github.castab.commerce.booking.lifecycle` | A type-level protocol for the phases of a booking (`InitialRequest → Quote → Booked → Completed`, or `Cancelled`). Your application's own types implement the phases. |
+| [Customer and booking records](#customer-and-booking-records) | `io.github.castab.commerce.customer`, `io.github.castab.commerce.booking` | Minimal customer identity, a booking-to-customer association, and independently held contacts and locations. |
 | [Financial documents](#financial-documents) | `io.github.castab.commerce.financial` | Immutable, versioned commercial documents (`Estimate → Quote → Invoice`) with line items, change orders, derived totals, and persistence-agnostic history lookup. |
 | [Payment reconciliation](#payment-reconciliation) | `io.github.castab.commerce.payment` | Immutable payment records, payment allocations, allocation reversals, refund records, and refund allocations, with derived payment and document reconciliation. |
 
-The booking lifecycle and the financial documents are independent: neither depends on the
-other, and an application can use one, the other, or
-[both together](#using-both-domains-together). The payment domain references financial
-documents, one way only. A financial document never knows about its payments.
+The booking lifecycle protocol remains independent of financial documents. Booking
+records and financial documents both reference `Customer.Id`. The payment domain references
+financial documents, one way only. A financial document never knows about its payments.
 
 The domains share one design stance. Lifecycle progression is expressed by the type
 system rather than a mutable status field: an operation that is not legal in a stage or
@@ -37,6 +37,7 @@ is `kotlin-stdlib`.
 
 - [Installation](#installation)
 - [Booking lifecycle](#booking-lifecycle)
+- [Customer and booking records](#customer-and-booking-records)
 - [Financial documents](#financial-documents)
 - [Payment reconciliation](#payment-reconciliation)
 - [Using both domains together](#using-both-domains-together)
@@ -200,7 +201,7 @@ to each application.
 
 ```kotlin
 data class CateringQuote(
-    val customerId: UUID,
+    val customerId: Customer.Id,
     val total: BigDecimal,
 ) : BookingLifecycle.Active.Quote {
     // transition implementations, shown below
@@ -378,13 +379,15 @@ fun describe(phase: BookingLifecycle): String =
 
 Below is a complete application-owned chain for a catering business. It lives in the
 application's own package. Every field and every type other than `BookingLifecycle`
-belongs to the application, including `bookingId`: the library does not define booking
-identity.
+belongs to the application. The library defines `Booking.Id` for a stable booking
+reference; the application carries it through its own phase types.
 
 ```kotlin
 package com.example.catering
 
+import io.github.castab.commerce.booking.Booking
 import io.github.castab.commerce.booking.lifecycle.BookingLifecycle
+import io.github.castab.commerce.customer.Customer
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.UUID
@@ -392,8 +395,8 @@ import java.util.UUID
 data class MenuSelection(val item: String, val servings: Int)
 
 data class CateringInitialRequest(
-    val bookingId: UUID,
-    val customerId: UUID,
+    val bookingId: Booking.Id,
+    val customerId: Customer.Id,
     val eventDate: LocalDate,
     val selections: List<MenuSelection>,
     val estimatedTotal: BigDecimal,
@@ -407,8 +410,8 @@ data class CateringInitialRequest(
 }
 
 data class CateringQuote(
-    val bookingId: UUID,
-    val customerId: UUID,
+    val bookingId: Booking.Id,
+    val customerId: Customer.Id,
     val eventDate: LocalDate,
     val selections: List<MenuSelection>,
     val total: BigDecimal,
@@ -427,8 +430,8 @@ data class CateringQuote(
 }
 
 data class CateringBooking(
-    val bookingId: UUID,
-    val customerId: UUID,
+    val bookingId: Booking.Id,
+    val customerId: Customer.Id,
     val eventDate: LocalDate,
     val selections: List<MenuSelection>,
     val invoiceTotal: BigDecimal,
@@ -451,26 +454,26 @@ data class CateringBooking(
 }
 
 data class CompletedCateringBooking(
-    val bookingId: UUID,
-    val customerId: UUID,
+    val bookingId: Booking.Id,
+    val customerId: Customer.Id,
     val eventDate: LocalDate,
     val finalTotal: BigDecimal,
 ) : BookingLifecycle.Terminal.Completed
 
 data class CancelledCateringInquiry(
-    val bookingId: UUID,
-    val customerId: UUID,
+    val bookingId: Booking.Id,
+    val customerId: Customer.Id,
 ) : BookingLifecycle.Terminal.Cancelled
 
 data class DeclinedCateringQuote(
-    val bookingId: UUID,
-    val customerId: UUID,
+    val bookingId: Booking.Id,
+    val customerId: Customer.Id,
     val quotedTotal: BigDecimal,
 ) : BookingLifecycle.Terminal.Cancelled
 
 data class CancelledCateringBooking(
-    val bookingId: UUID,
-    val customerId: UUID,
+    val bookingId: Booking.Id,
+    val customerId: Customer.Id,
     val eventDate: LocalDate,
 ) : BookingLifecycle.Terminal.Cancelled
 ```
@@ -479,8 +482,8 @@ Walking the canonical path:
 
 ```kotlin
 val request = CateringInitialRequest(
-    bookingId = UUID.randomUUID(),
-    customerId = UUID.randomUUID(),
+    bookingId = Booking.Id(UUID.randomUUID()),
+    customerId = Customer.Id(UUID.randomUUID()),
     eventDate = LocalDate.of(2026, 11, 14),
     selections = listOf(MenuSelection("Tamales", servings = 80)),
     estimatedTotal = BigDecimal("1200.00"),
@@ -620,9 +623,9 @@ val someBooking: BookingLifecycle.Active.Booked = someQuote.toBooking()
 
 The booking lifecycle does not own, define, or constrain any of the following:
 
-- customer models or customer identity
+- customer fields or customer management (the separate customer package defines minimal identity)
 - staff identity or actors
-- booking identity (how a quote and its booking are known to be the same booking)
+- carrying `Booking.Id` through application-owned phase models
 - selections, line items, or estimates
 - quote contents and quote versions
 - invoice details and invoice versions
@@ -695,7 +698,7 @@ lifecycle. Money actually returned can be recorded with the
 than bookings; the application links the two. A minimal application-owned sketch:
 
 ```kotlin
-data class Refund(val bookingId: UUID, val amount: BigDecimal, val reason: String)
+data class Refund(val bookingId: Booking.Id, val amount: BigDecimal, val reason: String)
 
 val refund = Refund(completed.bookingId, BigDecimal("150.00"), reason = "late delivery")
 // `completed` is still a BookingLifecycle.Terminal.Completed
@@ -714,10 +717,55 @@ support, and accounting are orthogonal to the booking lifecycle. For that reason
 are no phases such as `CompletedRefunded`, `PartiallyRefunded`, `DepositPaid`,
 `ChargebackReceived`, or `ComplaintOpened`.
 
+## Customer and booking records
+
+```text
+CUSTOMER                            Minimal person identity
+(id, name, email, phoneNumber)      Who is the person doing business with us?
+           │ Customer.Id
+      ┌────┴──────────────┐
+      ▼                   ▼
+BOOKING              FINANCIAL DOCUMENTS
+(id, customerId)     (id, customerId, stage, lines, versions)
+      │
+      ├── BookingContact  0..N  Who should we contact for this booking?
+      └── BookingLocation 0..1  Where does this booking take place?
+```
+
+`Customer` contains exactly an ID, name, email, and phone number. Its `Customer.Id` is a
+UUID-backed value. It has no address, postal code, booking history, or payment information.
+`Booking` identifies the service arrangement and references that customer by ID. The
+application still owns the concrete lifecycle phase models and business transitions.
+
+Each `BookingContact` has its own `BookingContact.Id` and `Booking.Id`.
+`CustomerContact` references an existing `Customer.Id` and copies no name, email, or
+phone. `ExternalContact` describes a different person for this booking without creating
+a customer. It requires a name and at
+least one of email or phone. Several contacts can share a booking ID.
+
+`BookingLocation` has its own `BookingLocation.Id`, `Booking.Id`, and `PostalAddress`.
+Region and postal code are optional for places that do not use them; when present, they
+belong to that booking's location. Two bookings of one customer can therefore have different
+addresses. An application may keep at most one active location per booking; the library
+has no repository or global registry to enforce collection-wide cardinality.
+
+Contacts and locations are separate records referenced by booking ID. An application can
+later apply shorter retention to this operational PII and remove those records without
+deleting the customer, booking, financial history, or payment history. This library does
+not perform retention or purging.
+
+Financial documents answer what was proposed, agreed to, or invoiced. Payment records and
+reconciliation answer what was paid, refunded, and allocated. Documents retain only the
+`Customer.Id` relationship; they do not copy customer contact details or event addresses.
+
 ## Financial documents
 
 Package `io.github.castab.commerce.financial`. Immutable, versioned commercial documents:
 estimates, quotes, and invoices.
+
+`create` and `restore` on every stage now require `Customer.Id`. This is a deliberate
+source and binary API change: applications must supply and persist the customer reference
+for each document lineage. Revisions and stage transitions preserve it automatically.
 
 Unlike the booking lifecycle, these are concrete library-owned types. The library enforces
 the invariants that every application needs from a financial document: one identity per
@@ -901,6 +949,7 @@ import io.github.castab.commerce.financial.ChangeOrder
 import io.github.castab.commerce.financial.FinancialDocument
 import io.github.castab.commerce.financial.LineItem
 import io.github.castab.commerce.financial.Money
+import io.github.castab.commerce.customer.Customer
 import java.math.BigDecimal
 import java.util.Currency
 import java.util.UUID
@@ -927,6 +976,7 @@ val serviceFee = LineItem(
 // 1. Create an estimate: v1, no previous version.
 val estimateV1 = FinancialDocument.Estimate.create(
     id = UUID.randomUUID(),
+    customerId = Customer.Id(UUID.randomUUID()),
     lineItems = listOf(tamales, serviceFee),
 )
 estimateV1.total                      // 898.00 USD  (600.00 + 250.00 + 48.00 tax)
@@ -978,6 +1028,7 @@ A sale that never had an estimate or quote starts its lineage as an invoice:
 ```kotlin
 val receipt = FinancialDocument.Invoice.create(
     id = UUID.randomUUID(),
+    customerId = Customer.Id(UUID.randomUUID()),
     lineItems = listOf(
         LineItem(
             id = UUID.randomUUID(),
@@ -1064,12 +1115,13 @@ class JdbiFinancialDocumentHistory(private val jdbi: Jdbi) : FinancialDocumentHi
 
     private fun toDocument(rs: ResultSet): FinancialDocument {
         val id = rs.getObject("document_id", UUID::class.java)
+        val customerId = Customer.Id(rs.getObject("customer_id", UUID::class.java))
         val version = Version.of(rs.getInt("version"))
         val lineItems = readLineItems(rs)                      // your mapping
         return when (rs.getString("stage")) {
-            "ESTIMATE" -> FinancialDocument.Estimate.restore(id, version, lineItems)
-            "QUOTE" -> FinancialDocument.Quote.restore(id, version, lineItems)
-            "INVOICE" -> FinancialDocument.Invoice.restore(id, version, lineItems)
+            "ESTIMATE" -> FinancialDocument.Estimate.restore(id, version, lineItems, customerId)
+            "QUOTE" -> FinancialDocument.Quote.restore(id, version, lineItems, customerId)
+            "INVOICE" -> FinancialDocument.Invoice.restore(id, version, lineItems, customerId)
             else -> error("Unknown stage")
         }
     }
@@ -1134,6 +1186,7 @@ The complete public API of `io.github.castab.commerce.financial`, without KDoc a
 ```kotlin
 public sealed class FinancialDocument {
     public val id: UUID
+    public val customerId: Customer.Id
     public val version: Version
     public val previousVersion: Version?
     public val lineItems: List<LineItem>
@@ -1149,8 +1202,8 @@ public sealed class FinancialDocument {
         override fun changeOrder(changeOrder: ChangeOrder): Estimate
         public fun toQuote(): Quote
         public companion object {
-            public fun create(id: UUID, lineItems: List<LineItem>): Estimate
-            public fun restore(id: UUID, version: Version, lineItems: List<LineItem>): Estimate
+            public fun create(id: UUID, lineItems: List<LineItem>, customerId: Customer.Id): Estimate
+            public fun restore(id: UUID, version: Version, lineItems: List<LineItem>, customerId: Customer.Id): Estimate
         }
     }
 
@@ -1158,16 +1211,16 @@ public sealed class FinancialDocument {
         override fun changeOrder(changeOrder: ChangeOrder): Quote
         public fun toInvoice(): Invoice
         public companion object {
-            public fun create(id: UUID, lineItems: List<LineItem>): Quote
-            public fun restore(id: UUID, version: Version, lineItems: List<LineItem>): Quote
+            public fun create(id: UUID, lineItems: List<LineItem>, customerId: Customer.Id): Quote
+            public fun restore(id: UUID, version: Version, lineItems: List<LineItem>, customerId: Customer.Id): Quote
         }
     }
 
     public class Invoice : FinancialDocument {
         override fun changeOrder(changeOrder: ChangeOrder): Invoice
         public companion object {
-            public fun create(id: UUID, lineItems: List<LineItem>): Invoice
-            public fun restore(id: UUID, version: Version, lineItems: List<LineItem>): Invoice
+            public fun create(id: UUID, lineItems: List<LineItem>, customerId: Customer.Id): Invoice
+            public fun restore(id: UUID, version: Version, lineItems: List<LineItem>, customerId: Customer.Id): Invoice
         }
     }
 }
@@ -1222,7 +1275,7 @@ public fun FinancialDocument.retrieveVersion(version: Version, from: FinancialDo
 public fun FinancialDocument.retrieveLatestVersion(from: FinancialDocumentHistory): FinancialDocument?
 ```
 
-From Java, the factories are static (`FinancialDocument.Quote.create(id, items)`,
+From Java, the factories are static (`FinancialDocument.Quote.create(id, items, customerId)`,
 `Version.of(3)`, `Version.INITIAL`), and the history helpers are static methods on
 `FinancialDocumentHistories`.
 
@@ -1469,6 +1522,7 @@ deposit, or only invoices take payment, is your policy.
 ### Example: deposit, later invoice version, partial refund
 
 ```kotlin
+import io.github.castab.commerce.customer.Customer
 import io.github.castab.commerce.financial.ChangeOrder
 import io.github.castab.commerce.financial.FinancialDocument
 import io.github.castab.commerce.financial.LineItem
@@ -1487,7 +1541,7 @@ val catering = LineItem(UUID.randomUUID(), "Catering", quantity = null, price = 
 val rentals = LineItem(UUID.randomUUID(), "Table rentals", quantity = null, price = usd("200.00"), taxAmount = usd("0.00"))
 
 // D/v1: a $1,000 quote.
-val quoteV1 = FinancialDocument.Quote.create(id = UUID.randomUUID(), lineItems = listOf(catering))
+val quoteV1 = FinancialDocument.Quote.create(id = UUID.randomUUID(), customerId = Customer.Id(UUID.randomUUID()), lineItems = listOf(catering))
 
 // A $300 card deposit arrives through Stripe and is applied to the quote as it stands.
 val deposit = PaymentRecord(
@@ -1690,18 +1744,19 @@ overloads for the optional parameters.
 
 ## Using both domains together
 
-The two domains are independent, and neither imports the other. They compose in
+The booking lifecycle and financial document stages are independent and compose in
 application code. A booking's `Quote` *phase* and a financial `Quote` *document* are
 different concepts: one says where the booking stands, and the other is the priced offer.
 An application can let its phase models carry documents:
 
 ```kotlin
+import io.github.castab.commerce.booking.Booking
 import io.github.castab.commerce.booking.lifecycle.BookingLifecycle
 import io.github.castab.commerce.financial.ChangeOrder
 import io.github.castab.commerce.financial.FinancialDocument
 
 data class CateringQuote(
-    val bookingId: UUID,
+    val bookingId: Booking.Id,
     val quote: FinancialDocument.Quote,
 ) : BookingLifecycle.Active.Quote {
 
@@ -1714,7 +1769,7 @@ data class CateringQuote(
 }
 
 data class CateringBooking(
-    val bookingId: UUID,
+    val bookingId: Booking.Id,
     val invoice: FinancialDocument.Invoice,
 ) : BookingLifecycle.Active.Booked {
 
@@ -1727,8 +1782,8 @@ data class CateringBooking(
 }
 ```
 
-The booking lifecycle still owns no financial data, and the financial documents know
-nothing about bookings. Whether the two advance together, and when, is your
+The booking lifecycle still owns no financial data, and the financial documents hold
+only customer identity, not booking data. Whether the two advance together, and when, is your
 application's decision.
 
 ## What this library is not
@@ -1737,7 +1792,7 @@ It is not:
 
 - an ORM, a repository layer, or a persistence framework;
 - a workflow engine or a runtime policy engine;
-- a universal booking aggregate or booking data model;
+- a booking workflow engine or repository;
 - a pricing, tax-calculation, or quote engine (your application prices lines and computes tax);
 - a payment processor integration, a checkout, or a card-data store;
 - an accounting ledger (no accounts, journals, debits, or credits);
@@ -1770,8 +1825,23 @@ On Windows:
 ```
 
 `build` compiles the library, runs the full test suite, and assembles the main, sources,
-and javadoc jars. It does not publish anything and needs no GitHub credentials. Local
+and javadoc jars. It also runs ktlint checks. It does not publish anything and needs no GitHub credentials. Local
 builds use the version `0.0.0-SNAPSHOT`.
+
+### Kotlin formatting
+
+The build uses [ktlint-gradle](https://github.com/JLLeitschuh/ktlint-gradle) 14.2.0.
+Run `./gradlew ktlintCheck` to check Kotlin sources and Gradle Kotlin scripts, or
+`./gradlew ktlintFormat` to format them. On Windows use `./gradlew.bat` (or
+`.\gradlew.bat` in PowerShell). Plain text and HTML reports appear under
+`build/reports/ktlint/`. The normal `build` runs checks before main-source formatting;
+`compileKotlin` alone formats main sources before compilation.
+
+The root `.editorconfig` selects ktlint's official style and four-space indentation.
+To set a line limit later, add `max_line_length = 120` under `[*.{kt,kts}]` there.
+For a temporary baseline of existing violations, run `./gradlew ktlintGenerateBaseline`;
+the configured file is `config/ktlint/baseline.xml`. Baselines affect checking, while
+formatting still visits those files.
 
 The build cache is enabled. To make the tests run again rather than reuse cached results,
 add `--no-build-cache` (or run `./gradlew test --rerun`).
@@ -1811,6 +1881,10 @@ uploading anything (for example, a transient error), use **Re-run jobs** on that
 
 What exists today:
 
+- the minimal `Customer` identity, UUID-backed `Customer.Id`, and validated name,
+  email, and phone value objects;
+- the `Booking` to customer association, separate `BookingContact` variants, and
+  `BookingLocation` with a postal address;
 - the booking lifecycle protocol: 3 sealed classifications, 5 open phase interfaces, and
   6 abstract transition functions;
 - the financial document domain: the sealed `FinancialDocument` with `Estimate`, `Quote`,

@@ -48,25 +48,24 @@ import java.util.UUID
  * allocation, depends on records this one cannot see; [PaymentReconciliation] and
  * [FinancialDocumentReconciliation] check that.
  */
-public class RefundAllocation private constructor(
+class RefundAllocation private constructor(
     /** The identity of this refund allocation, chosen by the application. */
-    public val id: UUID,
+    val id: UUID,
     /** The [RefundRecord.id] of the refund that returned the money. */
-    public val refundReference: UUID,
+    val refundReference: UUID,
     /** The [PaymentAllocation.id] of the allocation whose applied value is unwound. */
-    public val paymentAllocationReference: UUID,
+    val paymentAllocationReference: UUID,
     /** The amount unwound. Strictly positive, in the payment's currency. */
-    public val amount: Money,
+    val amount: Money,
     /** When the refunded amount was attributed to the allocation. */
-    public val allocatedAt: Instant,
+    val allocatedAt: Instant,
 ) {
-
     init {
         require(amount.isPositive()) { "Refund allocation $id must have a positive amount, but was $amount" }
     }
 
     /** The currency of the refund allocation: the currency of [amount]. */
-    public val currency: Currency
+    val currency: Currency
         get() = amount.currency
 
     override fun equals(other: Any?): Boolean =
@@ -91,8 +90,7 @@ public class RefundAllocation private constructor(
         "RefundAllocation(id=$id, refundReference=$refundReference, " +
             "paymentAllocationReference=$paymentAllocationReference, amount=$amount, allocatedAt=$allocatedAt)"
 
-    public companion object {
-
+    companion object {
         /**
          * Records that [amount] of [refund] unwinds value applied by [allocation]. Stores
          * `refund.id` and `allocation.id`, never the records themselves, and modifies
@@ -103,7 +101,7 @@ public class RefundAllocation private constructor(
          * currency, or exceeds the refund amount or the allocation amount.
          */
         @JvmStatic
-        public fun create(
+        fun create(
             id: UUID,
             refund: RefundRecord,
             allocation: PaymentAllocation,
@@ -139,7 +137,7 @@ public class RefundAllocation private constructor(
          * @throws IllegalArgumentException if [amount] is not strictly positive.
          */
         @JvmStatic
-        public fun restore(
+        fun restore(
             id: UUID,
             refundReference: UUID,
             paymentAllocationReference: UUID,

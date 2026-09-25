@@ -13,8 +13,7 @@ package io.github.castab.commerce.payment
  * The method is a descriptive fact. The library attaches no policy to it: in particular, a
  * refund's method may differ from the method of the payment it refunds.
  */
-public enum class PaymentMethod {
-
+enum class PaymentMethod {
     /** Physical currency. */
     CASH,
 

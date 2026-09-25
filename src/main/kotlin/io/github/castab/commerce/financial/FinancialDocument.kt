@@ -1,5 +1,6 @@
 package io.github.castab.commerce.financial
 
+import io.github.castab.commerce.customer.Customer
 import io.github.castab.commerce.financial.ChangeOrder.Change
 import java.util.Collections
 import java.util.Currency
@@ -22,7 +23,7 @@ import java.util.UUID
  *                 ─changeOrder→ ABC v4 Quote    ─toInvoice→ ABC v5 Invoice
  * ```
  *
- * The stage may change along a lineage. The [id] never does.
+ * The stage may change along a lineage. The [id] and [customerId] never do.
  *
  * ## Lifecycle stage
  *
@@ -45,6 +46,12 @@ import java.util.UUID
  * [currency]. [subtotal], [taxAmount], and [total] are always calculated from the line
  * items and can never be supplied by a caller, so a document cannot contradict its own
  * lines.
+ *
+ * ## Customer relationship
+ *
+ * Every snapshot identifies the customer through [customerId], without copying name,
+ * email, phone, or booking location. A change order or stage transition preserves this
+ * reference. Payment and refund facts remain outside the document.
  *
  * ## History and persistence
  *
@@ -69,33 +76,34 @@ import java.util.UUID
  * snapshot by its [reference] and balances are derived, never stored. Applications still
  * own persistence, processor integration, and payment policy.
  */
-public sealed class FinancialDocument(
+sealed class FinancialDocument(
     /** The identity of the lineage this snapshot belongs to. Shared by every version. */
-    public val id: UUID,
+    val id: UUID,
+    /** The customer this document lineage concerns; shared by every snapshot. */
+    val customerId: Customer.Id,
     /** The position of this snapshot within its lineage. */
-    public val version: Version,
+    val version: Version,
     /**
      * The version this snapshot was derived from, or `null` for the first snapshot of a
      * lineage. Always the version immediately preceding [version].
      */
-    public val previousVersion: Version?,
+    val previousVersion: Version?,
     lineItems: List<LineItem>,
 ) {
-
     /** The line items of this snapshot, in order. Never empty and never modified. */
-    public val lineItems: List<LineItem> = lineItems.toImmutableList()
+    val lineItems: List<LineItem> = lineItems.toImmutableList()
 
     /** The single currency shared by every line item and every total of this document. */
-    public val currency: Currency
+    val currency: Currency
 
     /** The sum of every line item's [LineItem.subtotal]. Excludes tax. */
-    public val subtotal: Money
+    val subtotal: Money
 
     /** The sum of every line item's [LineItem.taxAmount]. */
-    public val taxAmount: Money
+    val taxAmount: Money
 
     /** The document total: [subtotal] plus [taxAmount]. */
-    public val total: Money
+    val total: Money
 
     init {
         require(if (previousVersion == null) version == Version.INITIAL else previousVersion.next() == version) {
@@ -111,7 +119,12 @@ public sealed class FinancialDocument(
                     "${lineItem.currency.currencyCode}, but the document is in ${currency.currencyCode}"
             }
         }
-        val duplicateIds = this.lineItems.groupingBy { it.id }.eachCount().filterValues { it > 1 }.keys
+        val duplicateIds =
+            this.lineItems
+                .groupingBy { it.id }
+                .eachCount()
+                .filterValues { it > 1 }
+                .keys
         require(duplicateIds.isEmpty()) {
             "Financial document $id contains duplicate line item ids: $duplicateIds"
         }
@@ -121,7 +134,7 @@ public sealed class FinancialDocument(
     }
 
     /** The reference that identifies exactly this snapshot. */
-    public val reference: FinancialDocumentReference
+    val reference: FinancialDocumentReference
         get() = FinancialDocumentReference(id, version)
 
     /**
@@ -129,7 +142,7 @@ public sealed class FinancialDocument(
      * snapshot of a lineage. Only the reference: the earlier snapshot itself is never
      * loaded or held. See [retrievePreviousVersion].
      */
-    public val previousReference: FinancialDocumentReference?
+    val previousReference: FinancialDocumentReference?
         get() = previousVersion?.let { FinancialDocumentReference(id, it) }
 
     /**
@@ -144,13 +157,14 @@ public sealed class FinancialDocument(
      * A change order never changes the lifecycle stage. Each stage narrows the return type
      * to itself.
      */
-    public abstract fun changeOrder(changeOrder: ChangeOrder): FinancialDocument
+    abstract fun changeOrder(changeOrder: ChangeOrder): FinancialDocument
 
     final override fun equals(other: Any?): Boolean =
         this === other ||
             other is FinancialDocument &&
             other.javaClass == javaClass &&
             other.id == id &&
+            other.customerId == customerId &&
             other.version == version &&
             other.previousVersion == previousVersion &&
             other.lineItems == lineItems
@@ -158,18 +172,20 @@ public sealed class FinancialDocument(
     final override fun hashCode(): Int {
         var result = javaClass.hashCode()
         result = 31 * result + id.hashCode()
+        result = 31 * result + customerId.hashCode()
         result = 31 * result + version.hashCode()
         result = 31 * result + lineItems.hashCode()
         return result
     }
 
     final override fun toString(): String {
-        val stage = when (this) {
-            is Estimate -> "Estimate"
-            is Quote -> "Quote"
-            is Invoice -> "Invoice"
-        }
-        return "$stage(id=$id, version=$version, previousVersion=$previousVersion, " +
+        val stage =
+            when (this) {
+                is Estimate -> "Estimate"
+                is Quote -> "Quote"
+                is Invoice -> "Invoice"
+            }
+        return "$stage(id=$id, customerId=$customerId, version=$version, previousVersion=$previousVersion, " +
             "lineItems=$lineItems, subtotal=$subtotal, taxAmount=$taxAmount, total=$total)"
     }
 
@@ -180,15 +196,15 @@ public sealed class FinancialDocument(
      * new `Estimate` snapshot. It moves forward only by [toQuote]. An estimate cannot become
      * an invoice directly.
      */
-    public class Estimate private constructor(
+    class Estimate private constructor(
         id: UUID,
+        customerId: Customer.Id,
         version: Version,
         previousVersion: Version?,
         lineItems: List<LineItem>,
-    ) : FinancialDocument(id, version, previousVersion, lineItems) {
-
+    ) : FinancialDocument(id, customerId, version, previousVersion, lineItems) {
         override fun changeOrder(changeOrder: ChangeOrder): Estimate =
-            Estimate(id, version.next(), version, lineItems.applying(changeOrder))
+            Estimate(id, customerId, version.next(), version, lineItems.applying(changeOrder))
 
         /**
          * Issues this estimate as a quote.
@@ -197,10 +213,9 @@ public sealed class FinancialDocument(
          * next [version], and [previousVersion] equal to this estimate's version. This
          * estimate is not modified.
          */
-        public fun toQuote(): Quote = Quote.successorOf(this)
+        fun toQuote(): Quote = Quote.successorOf(this)
 
-        public companion object {
-
+        companion object {
             /**
              * Starts a new lineage as an estimate, at [Version.INITIAL] with no previous
              * version.
@@ -212,8 +227,11 @@ public sealed class FinancialDocument(
              * repeats a line item id.
              */
             @JvmStatic
-            public fun create(id: UUID, lineItems: List<LineItem>): Estimate =
-                Estimate(id, Version.INITIAL, null, lineItems)
+            fun create(
+                id: UUID,
+                lineItems: List<LineItem>,
+                customerId: Customer.Id,
+            ): Estimate = Estimate(id, customerId, Version.INITIAL, null, lineItems)
 
             /**
              * Reconstructs a previously produced estimate snapshot, for use by persistence
@@ -224,8 +242,12 @@ public sealed class FinancialDocument(
              * lifecycle functions, which keep versions consistent.
              */
             @JvmStatic
-            public fun restore(id: UUID, version: Version, lineItems: List<LineItem>): Estimate =
-                Estimate(id, version, version.previous(), lineItems)
+            fun restore(
+                id: UUID,
+                version: Version,
+                lineItems: List<LineItem>,
+                customerId: Customer.Id,
+            ): Estimate = Estimate(id, customerId, version, version.previous(), lineItems)
         }
     }
 
@@ -236,15 +258,15 @@ public sealed class FinancialDocument(
      * directly with [create] when the application does not use estimates. It can be revised
      * any number of times with [changeOrder], and moves forward only by [toInvoice].
      */
-    public class Quote private constructor(
+    class Quote private constructor(
         id: UUID,
+        customerId: Customer.Id,
         version: Version,
         previousVersion: Version?,
         lineItems: List<LineItem>,
-    ) : FinancialDocument(id, version, previousVersion, lineItems) {
-
+    ) : FinancialDocument(id, customerId, version, previousVersion, lineItems) {
         override fun changeOrder(changeOrder: ChangeOrder): Quote =
-            Quote(id, version.next(), version, lineItems.applying(changeOrder))
+            Quote(id, customerId, version.next(), version, lineItems.applying(changeOrder))
 
         /**
          * Issues this quote as an invoice.
@@ -253,10 +275,9 @@ public sealed class FinancialDocument(
          * next [version], and [previousVersion] equal to this quote's version. This quote is
          * not modified.
          */
-        public fun toInvoice(): Invoice = Invoice.successorOf(this)
+        fun toInvoice(): Invoice = Invoice.successorOf(this)
 
-        public companion object {
-
+        companion object {
             /**
              * Starts a new lineage as a quote, at [Version.INITIAL] with no previous version,
              * for applications that issue quotes without a preceding estimate.
@@ -268,8 +289,11 @@ public sealed class FinancialDocument(
              * repeats a line item id.
              */
             @JvmStatic
-            public fun create(id: UUID, lineItems: List<LineItem>): Quote =
-                Quote(id, Version.INITIAL, null, lineItems)
+            fun create(
+                id: UUID,
+                lineItems: List<LineItem>,
+                customerId: Customer.Id,
+            ): Quote = Quote(id, customerId, Version.INITIAL, null, lineItems)
 
             /**
              * Reconstructs a previously produced quote snapshot, for use by persistence
@@ -280,12 +304,16 @@ public sealed class FinancialDocument(
              * lifecycle functions, which keep versions consistent.
              */
             @JvmStatic
-            public fun restore(id: UUID, version: Version, lineItems: List<LineItem>): Quote =
-                Quote(id, version, version.previous(), lineItems)
+            fun restore(
+                id: UUID,
+                version: Version,
+                lineItems: List<LineItem>,
+                customerId: Customer.Id,
+            ): Quote = Quote(id, customerId, version, version.previous(), lineItems)
 
             @JvmSynthetic
             internal fun successorOf(estimate: Estimate): Quote =
-                Quote(estimate.id, estimate.version.next(), estimate.version, estimate.lineItems)
+                Quote(estimate.id, estimate.customerId, estimate.version.next(), estimate.version, estimate.lineItems)
         }
     }
 
@@ -300,18 +328,17 @@ public sealed class FinancialDocument(
      * status, amounts paid, and balances are deliberately absent. They are derived outside
      * the document, by the `io.github.castab.commerce.payment` domain.
      */
-    public class Invoice private constructor(
+    class Invoice private constructor(
         id: UUID,
+        customerId: Customer.Id,
         version: Version,
         previousVersion: Version?,
         lineItems: List<LineItem>,
-    ) : FinancialDocument(id, version, previousVersion, lineItems) {
-
+    ) : FinancialDocument(id, customerId, version, previousVersion, lineItems) {
         override fun changeOrder(changeOrder: ChangeOrder): Invoice =
-            Invoice(id, version.next(), version, lineItems.applying(changeOrder))
+            Invoice(id, customerId, version.next(), version, lineItems.applying(changeOrder))
 
-        public companion object {
-
+        companion object {
             /**
              * Starts a new lineage as an invoice, at [Version.INITIAL] with no previous
              * version. This is a first-class entry point, for example for a point-of-sale
@@ -324,8 +351,11 @@ public sealed class FinancialDocument(
              * repeats a line item id.
              */
             @JvmStatic
-            public fun create(id: UUID, lineItems: List<LineItem>): Invoice =
-                Invoice(id, Version.INITIAL, null, lineItems)
+            fun create(
+                id: UUID,
+                lineItems: List<LineItem>,
+                customerId: Customer.Id,
+            ): Invoice = Invoice(id, customerId, Version.INITIAL, null, lineItems)
 
             /**
              * Reconstructs a previously produced invoice snapshot, for use by persistence
@@ -336,12 +366,16 @@ public sealed class FinancialDocument(
              * lifecycle functions, which keep versions consistent.
              */
             @JvmStatic
-            public fun restore(id: UUID, version: Version, lineItems: List<LineItem>): Invoice =
-                Invoice(id, version, version.previous(), lineItems)
+            fun restore(
+                id: UUID,
+                version: Version,
+                lineItems: List<LineItem>,
+                customerId: Customer.Id,
+            ): Invoice = Invoice(id, customerId, version, version.previous(), lineItems)
 
             @JvmSynthetic
             internal fun successorOf(quote: Quote): Invoice =
-                Invoice(quote.id, quote.version.next(), quote.version, quote.lineItems)
+                Invoice(quote.id, quote.customerId, quote.version.next(), quote.version, quote.lineItems)
         }
     }
 }

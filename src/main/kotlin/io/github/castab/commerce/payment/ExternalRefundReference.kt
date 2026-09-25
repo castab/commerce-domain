@@ -17,9 +17,9 @@ package io.github.castab.commerce.payment
  * be blank.
  * @property reference The refund's identifier in that system. Must not be blank.
  */
-public data class ExternalRefundReference(
-    public val provider: String,
-    public val reference: String,
+data class ExternalRefundReference(
+    val provider: String,
+    val reference: String,
 ) {
     init {
         require(provider.isNotBlank()) { "An external refund reference must have a non-blank provider" }

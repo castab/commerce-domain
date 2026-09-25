@@ -13,17 +13,16 @@ package io.github.castab.commerce.financial
  *
  * Versions compare by their [number], so snapshots of one lineage can be ordered.
  */
-public class Version private constructor(
+class Version private constructor(
     /** The 1-based version number, suitable for storage in a persistence adapter. */
-    public val number: Int,
+    val number: Int,
 ) : Comparable<Version> {
-
     /**
      * The version that immediately follows this one.
      *
      * @throws ArithmeticException if the version number would overflow [Int.MAX_VALUE].
      */
-    public fun next(): Version = Version(Math.addExact(number, 1))
+    fun next(): Version = Version(Math.addExact(number, 1))
 
     /** The version immediately preceding this one, or `null` for [INITIAL]. */
     @JvmSynthetic
@@ -37,11 +36,10 @@ public class Version private constructor(
 
     override fun toString(): String = "v$number"
 
-    public companion object {
-
+    companion object {
         /** The version of every newly created financial-document lineage: 1. */
         @JvmField
-        public val INITIAL: Version = Version(1)
+        val INITIAL: Version = Version(1)
 
         /**
          * Reconstructs an existing version from its [number], for example when a persistence
@@ -50,7 +48,7 @@ public class Version private constructor(
          * @throws IllegalArgumentException if [number] is less than 1.
          */
         @JvmStatic
-        public fun of(number: Int): Version {
+        fun of(number: Int): Version {
             require(number >= 1) { "A version number must be at least 1, but was $number" }
             return if (number == 1) INITIAL else Version(number)
         }

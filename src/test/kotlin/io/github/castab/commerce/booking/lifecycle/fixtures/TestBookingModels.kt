@@ -15,7 +15,6 @@ data class TestInitialRequest(
     val partySize: Int,
     val notes: List<String> = emptyList(),
 ) : BookingLifecycle.Active.InitialRequest {
-
     override fun toQuote(): TestQuote =
         TestQuote(
             requester = requester,
@@ -23,8 +22,7 @@ data class TestInitialRequest(
             quotedCents = partySize * PRICE_PER_GUEST_CENTS,
         )
 
-    override fun cancel(): CancelledInquiry =
-        CancelledInquiry(requester = requester, reason = "requester withdrew")
+    override fun cancel(): CancelledInquiry = CancelledInquiry(requester = requester, reason = "requester withdrew")
 
     companion object {
         const val PRICE_PER_GUEST_CENTS: Long = 2_500
@@ -37,10 +35,8 @@ data class TestQuote(
     val quotedCents: Long,
     val revision: Int = 1,
 ) : BookingLifecycle.Active.Quote {
-
     /** An application-owned revision. The result is still a [BookingLifecycle.Active.Quote]. */
-    fun revise(newQuotedCents: Long): TestQuote =
-        copy(quotedCents = newQuotedCents, revision = revision + 1)
+    fun revise(newQuotedCents: Long): TestQuote = copy(quotedCents = newQuotedCents, revision = revision + 1)
 
     override fun toBooking(): TestBooking =
         TestBooking(
@@ -50,8 +46,7 @@ data class TestQuote(
             confirmationCode = "CONF-$requester-r$revision",
         )
 
-    override fun cancel(): DeclinedQuote =
-        DeclinedQuote(requester = requester, declinedCents = quotedCents)
+    override fun cancel(): DeclinedQuote = DeclinedQuote(requester = requester, declinedCents = quotedCents)
 }
 
 data class TestBooking(
@@ -60,12 +55,9 @@ data class TestBooking(
     val agreedCents: Long,
     val confirmationCode: String,
 ) : BookingLifecycle.Active.Booked {
+    override fun complete(): TestCompletedBooking = TestCompletedBooking(confirmationCode = confirmationCode, finalCents = agreedCents)
 
-    override fun complete(): TestCompletedBooking =
-        TestCompletedBooking(confirmationCode = confirmationCode, finalCents = agreedCents)
-
-    override fun cancel(): CancelledBooking =
-        CancelledBooking(confirmationCode = confirmationCode, forfeitedCents = agreedCents / 10)
+    override fun cancel(): CancelledBooking = CancelledBooking(confirmationCode = confirmationCode, forfeitedCents = agreedCents / 10)
 }
 
 data class TestCompletedBooking(
@@ -96,7 +88,6 @@ data class GuardedQuote(
     val reference: String,
     val customerAccepted: Boolean,
 ) : BookingLifecycle.Active.Quote {
-
     override fun toBooking(): TestBooking {
         require(customerAccepted) { "Quote $reference has not been accepted by the customer" }
         return TestBooking(

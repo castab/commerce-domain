@@ -37,30 +37,29 @@ import java.util.Currency
  * (unpaid, partially paid, paid, overpaid) can derive it from [netApplied] and [balance]. A
  * negative [balance] means more is applied than the document currently totals.
  */
-public class FinancialDocumentReconciliation private constructor(
+class FinancialDocumentReconciliation private constructor(
     /** The snapshot that was reconciled, normally the lineage's latest. */
-    public val documentReference: FinancialDocumentReference,
+    val documentReference: FinancialDocumentReference,
     /** The total of the reconciled snapshot. */
-    public val documentTotal: Money,
+    val documentTotal: Money,
     /** The sum of every allocation to any version of the document, as originally recorded. */
-    public val grossAllocated: Money,
+    val grossAllocated: Money,
     /** The sum of every reversal of those allocations. */
-    public val allocationReversals: Money,
+    val allocationReversals: Money,
     /** The sum of every refund allocation that unwinds those allocations. */
-    public val refundAllocations: Money,
+    val refundAllocations: Money,
 ) {
-
     /**
      * The money currently applied to the document: [grossAllocated] minus
      * [allocationReversals] and [refundAllocations].
      */
-    public val netApplied: Money = grossAllocated - allocationReversals - refundAllocations
+    val netApplied: Money = grossAllocated - allocationReversals - refundAllocations
 
     /** What remains owed: [documentTotal] minus [netApplied]. Negative when over-applied. */
-    public val balance: Money = documentTotal - netApplied
+    val balance: Money = documentTotal - netApplied
 
     /** The currency of the document and of every amount here. */
-    public val currency: Currency
+    val currency: Currency
         get() = documentTotal.currency
 
     override fun equals(other: Any?): Boolean =
@@ -86,8 +85,7 @@ public class FinancialDocumentReconciliation private constructor(
             "grossAllocated=$grossAllocated, allocationReversals=$allocationReversals, " +
             "refundAllocations=$refundAllocations, netApplied=$netApplied, balance=$balance)"
 
-    public companion object {
-
+    companion object {
         /**
          * Reconciles the lineage of [document] against the supplied records, using
          * [document]'s total as the amount owed.
@@ -112,7 +110,7 @@ public class FinancialDocumentReconciliation private constructor(
          */
         @JvmStatic
         @JvmOverloads
-        public fun reconcile(
+        fun reconcile(
             document: FinancialDocument,
             allocations: Collection<PaymentAllocation>,
             allocationReversals: Collection<PaymentAllocationReversal> = emptyList(),

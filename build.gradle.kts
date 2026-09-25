@@ -1,9 +1,31 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jlleitschuh.gradle.ktlint.reporter.ReporterType
 
 plugins {
     `java-library`
     `maven-publish`
     alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.ktlint)
+}
+
+ktlint {
+    outputToConsole.set(true)
+    coloredOutput.set(true)
+    baseline.set(layout.projectDirectory.file("config/ktlint/baseline.xml"))
+    reporters {
+        reporter(ReporterType.PLAIN)
+        reporter(ReporterType.HTML)
+    }
+}
+
+// Keep compilation of main sources on the formatter's output.
+tasks.named("compileKotlin") {
+    dependsOn("ktlintMainSourceSetFormat")
+}
+
+// When building, report style violations before compilation can format main sources.
+tasks.named("ktlintMainSourceSetFormat") {
+    mustRunAfter("ktlintMainSourceSetCheck")
 }
 
 group = "io.github.castab"
@@ -18,8 +40,10 @@ version = providers.gradleProperty("version").getOrElse("0.0.0-SNAPSHOT")
 // This is the repository that hosts the package, not the artifact identity: the
 // artifactId comes from rootProject.name (settings.gradle.kts), so renaming the
 // GitHub repository does not change the published coordinates.
-val githubRepository = providers.environmentVariable("GITHUB_REPOSITORY")
-    .getOrElse("castab/commerce-domain")
+val githubRepository =
+    providers
+        .environmentVariable("GITHUB_REPOSITORY")
+        .getOrElse("castab/commerce-domain")
 
 // ---------------------------------------------------------------------------
 // Java 25 is an intentional, hard requirement of this library.
@@ -43,7 +67,6 @@ java {
 }
 
 kotlin {
-    explicitApi()
     jvmToolchain(requiredJavaVersion)
     compilerOptions {
         jvmTarget = JvmTarget.JVM_25

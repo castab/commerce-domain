@@ -11,7 +11,7 @@ import java.util.UUID
  * earlier documents, so loading one snapshot never loads a chain of predecessors. A
  * reference maps naturally onto a persisted `(document_id, version)` key.
  */
-public data class FinancialDocumentReference(
-    public val id: UUID,
-    public val version: Version,
+data class FinancialDocumentReference(
+    val id: UUID,
+    val version: Version,
 )

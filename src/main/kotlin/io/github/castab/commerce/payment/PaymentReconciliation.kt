@@ -44,35 +44,34 @@ import java.util.UUID
  * accepted when the combined records are consistent. The library does not interpret the
  * order of application-supplied timestamps.
  */
-public class PaymentReconciliation private constructor(
+class PaymentReconciliation private constructor(
     /** The [PaymentRecord.id] of the reconciled payment. */
-    public val paymentReference: UUID,
+    val paymentReference: UUID,
     /** The amount received. */
-    public val paymentAmount: Money,
+    val paymentAmount: Money,
     /** The sum of every refund of the payment. Never more than [paymentAmount]. */
-    public val totalRefunded: Money,
+    val totalRefunded: Money,
     /** The sum of every allocation of the payment, as originally recorded. */
-    public val grossAllocated: Money,
+    val grossAllocated: Money,
     /** The sum of every reversal of the payment's allocations. */
-    public val allocationReversals: Money,
+    val allocationReversals: Money,
     /** The sum of every refund allocation that unwinds the payment's allocations. */
-    public val refundAllocations: Money,
+    val refundAllocations: Money,
 ) {
-
     /** The money the business kept: [paymentAmount] minus [totalRefunded]. */
-    public val netReceived: Money = paymentAmount - totalRefunded
+    val netReceived: Money = paymentAmount - totalRefunded
 
     /**
      * The money currently applied to documents: [grossAllocated] minus
      * [allocationReversals] and [refundAllocations].
      */
-    public val netAllocated: Money = grossAllocated - allocationReversals - refundAllocations
+    val netAllocated: Money = grossAllocated - allocationReversals - refundAllocations
 
     /** The kept money not applied to any document: [netReceived] minus [netAllocated]. Never negative. */
-    public val unallocated: Money = netReceived - netAllocated
+    val unallocated: Money = netReceived - netAllocated
 
     /** The currency of the payment and of every amount here. */
-    public val currency: Currency
+    val currency: Currency
         get() = paymentAmount.currency
 
     override fun equals(other: Any?): Boolean =
@@ -101,8 +100,7 @@ public class PaymentReconciliation private constructor(
             "allocationReversals=$allocationReversals, refundAllocations=$refundAllocations, " +
             "netAllocated=$netAllocated, unallocated=$unallocated)"
 
-    public companion object {
-
+    companion object {
         /**
          * Reconciles [payment] against the supplied records.
          *
@@ -128,7 +126,7 @@ public class PaymentReconciliation private constructor(
          */
         @JvmStatic
         @JvmOverloads
-        public fun reconcile(
+        fun reconcile(
             payment: PaymentRecord,
             allocations: Collection<PaymentAllocation>,
             allocationReversals: Collection<PaymentAllocationReversal> = emptyList(),
@@ -163,18 +161,21 @@ public class PaymentReconciliation private constructor(
             val paymentRefundIds = paymentRefunds.mapTo(HashSet()) { it.id }
 
             val reversals = allocationReversals.filter { it.paymentAllocationReference in paymentAllocationIds }
-            val unwound = refundAllocations.filter {
-                it.paymentAllocationReference in paymentAllocationIds || it.refundReference in paymentRefundIds
-            }
+            val unwound =
+                refundAllocations.filter {
+                    it.paymentAllocationReference in paymentAllocationIds || it.refundReference in paymentRefundIds
+                }
             unwound.forEach { refundAllocation ->
-                val refund = requireNotNull(refundsById[refundAllocation.refundReference]) {
-                    "Refund allocation ${refundAllocation.id} refers to refund ${refundAllocation.refundReference}, " +
-                        "which was not supplied"
-                }
-                val allocation = requireNotNull(allocationsById[refundAllocation.paymentAllocationReference]) {
-                    "Refund allocation ${refundAllocation.id} refers to payment allocation " +
-                        "${refundAllocation.paymentAllocationReference}, which was not supplied"
-                }
+                val refund =
+                    requireNotNull(refundsById[refundAllocation.refundReference]) {
+                        "Refund allocation ${refundAllocation.id} refers to refund ${refundAllocation.refundReference}, " +
+                            "which was not supplied"
+                    }
+                val allocation =
+                    requireNotNull(allocationsById[refundAllocation.paymentAllocationReference]) {
+                        "Refund allocation ${refundAllocation.id} refers to payment allocation " +
+                            "${refundAllocation.paymentAllocationReference}, which was not supplied"
+                    }
                 require(refund.paymentReference == allocation.paymentReference) {
                     "Refund allocation ${refundAllocation.id} links refund ${refund.id} of payment " +
                         "${refund.paymentReference} to allocation ${allocation.id} of payment " +
@@ -197,14 +198,15 @@ public class PaymentReconciliation private constructor(
             }
             requireAllocationsNotOverReduced(paymentAllocations, reversals, unwound)
 
-            val reconciliation = PaymentReconciliation(
-                paymentReference = payment.id,
-                paymentAmount = payment.amount,
-                totalRefunded = totalRefunded,
-                grossAllocated = paymentAllocations.sumIn(payment.currency) { it.amount },
-                allocationReversals = reversals.sumIn(payment.currency) { it.amount },
-                refundAllocations = unwound.sumIn(payment.currency) { it.amount },
-            )
+            val reconciliation =
+                PaymentReconciliation(
+                    paymentReference = payment.id,
+                    paymentAmount = payment.amount,
+                    totalRefunded = totalRefunded,
+                    grossAllocated = paymentAllocations.sumIn(payment.currency) { it.amount },
+                    allocationReversals = reversals.sumIn(payment.currency) { it.amount },
+                    refundAllocations = unwound.sumIn(payment.currency) { it.amount },
+                )
             require(reconciliation.unallocated.amount.signum() >= 0) {
                 "Payment ${payment.id} of ${payment.amount} is over-applied: ${reconciliation.netAllocated} " +
                     "remains allocated and ${reconciliation.totalRefunded} was refunded"
@@ -257,7 +259,10 @@ internal fun requireAllocationsNotOverReduced(
 
 /** The records keyed by id. Rejects a collection that repeats an id, which would count a record twice. */
 @JvmSynthetic
-internal fun <T> Collection<T>.indexById(kind: String, id: (T) -> UUID): Map<UUID, T> {
+internal fun <T> Collection<T>.indexById(
+    kind: String,
+    id: (T) -> UUID,
+): Map<UUID, T> {
     val index = HashMap<UUID, T>(size * 2)
     forEach { record ->
         require(index.putIfAbsent(id(record), record) == null) { "The supplied ${kind}s repeat id ${id(record)}" }
@@ -267,5 +272,7 @@ internal fun <T> Collection<T>.indexById(kind: String, id: (T) -> UUID): Map<UUI
 
 /** The exact sum of [amount] over these records, or zero in [currency] when there are none. */
 @JvmSynthetic
-internal inline fun <T> Collection<T>.sumIn(currency: Currency, amount: (T) -> Money): Money =
-    fold(Money.zero(currency)) { sum, record -> sum + amount(record) }
+internal inline fun <T> Collection<T>.sumIn(
+    currency: Currency,
+    amount: (T) -> Money,
+): Money = fold(Money.zero(currency)) { sum, record -> sum + amount(record) }

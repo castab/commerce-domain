@@ -16,6 +16,8 @@ APIs, shared by multiple applications. Each domain lives in its own package bene
 | Domain | Package | Style |
 |---|---|---|
 | Booking lifecycle | `io.github.castab.commerce.booking.lifecycle` | A type-level protocol. Adopters' own types implement the phases. The library owns no booking data. |
+| Customer identity | `io.github.castab.commerce.customer` | Minimal durable identity: UUID-backed `Customer.Id`, name, email, phone. |
+| Booking records | `io.github.castab.commerce.booking` | Immutable booking-to-customer association and separate operational contact and location records. |
 | Financial documents | `io.github.castab.commerce.financial` | Concrete, library-owned immutable value types (`Estimate`, `Quote`, `Invoice`) whose invariants the library enforces. |
 | Payment reconciliation | `io.github.castab.commerce.payment` | Concrete, library-owned immutable records (payments, allocations, allocation reversals, refunds, refund allocations) and reconciliation derived from records the application supplies. |
 
@@ -29,7 +31,8 @@ Dependencies between domains are fixed:
 
 ```text
 booking.lifecycle    imports nothing from the other domains, and nothing imports it
-financial            imports nothing from the other domains
+booking ──imports──→ customer
+financial ──imports──→ customer
 payment ──imports──→ financial   (FinancialDocument, FinancialDocumentReference, Money)
 ```
 
@@ -39,6 +42,8 @@ payment ──imports──→ financial   (FinancialDocument, FinancialDocument
 - The payment domain references financial documents, one way only. `financial` must never
   import `payment`: a document does not own, hold, or know about its settlement. The
   payment domain never imports the booking lifecycle.
+- The booking identity record and financial documents reference the same `Customer.Id`.
+  Neither embeds `Customer`, booking contacts, or booking locations.
 
 For the booking lifecycle:
 
@@ -53,6 +58,8 @@ booking lifecycle itself, it probably does not belong in the booking lifecycle A
 | Path | Contents |
 |---|---|
 | `src/main/kotlin/io/github/castab/commerce/booking/lifecycle/BookingLifecycle.kt` | The entire booking lifecycle API. |
+| `src/main/kotlin/io/github/castab/commerce/customer/Customer.kt` | Minimal customer identity and contact value objects. |
+| `src/main/kotlin/io/github/castab/commerce/booking/` | Booking identity association, contacts, postal address, and location. |
 | `src/main/kotlin/io/github/castab/commerce/payment/` | The payment reconciliation API: `PaymentMethod.kt`, `ExternalPaymentReference.kt`, `ExternalRefundReference.kt`, `PaymentRecord.kt`, `PaymentAllocation.kt`, `PaymentAllocationReversal.kt`, `RefundRecord.kt`, `RefundAllocation.kt`, `PaymentReconciliation.kt` (payment-level reconciliation and the shared validation helpers), and `FinancialDocumentReconciliation.kt`. |
 | `src/main/kotlin/io/github/castab/commerce/financial/` | The financial document API: `FinancialDocument.kt` (the sealed class, its three stages, and change application), `Version.kt`, `Money.kt`, `LineItem.kt`, `ChangeOrder.kt`, `FinancialDocumentReference.kt`, and `FinancialDocumentHistory.kt` (the history SPI and its lookup extensions). |
 | `src/test/kotlin/io/github/castab/commerce/booking/lifecycle/BookingLifecycleSpec.kt` | Kotest `FunSpec` for the booking lifecycle contract. |
@@ -169,6 +176,8 @@ them.
 ## Application data boundary
 
 Booking lifecycle interfaces declare transitions only, with no properties and no data.
+`Booking` in the sibling `booking` package is a separate immutable association between
+`Booking.Id` and `Customer.Id`. It is not a lifecycle phase or a container for operational PII.
 
 Avoid introducing types or fields such as these into the booking lifecycle:
 
@@ -178,10 +187,11 @@ Complaint  Refund  CancellationReason  bookingId  createdAt  version
 ```
 
 Add one only if a future architectural decision proves it is a lifecycle concept rather
-than adopter data. `Money` and `Invoice` now exist in the financial package, and payments
+than adopter data. `Customer` now exists in the customer package, `Booking` in the booking
+package, `Money` and `Invoice` in the financial package, and payments
 and refunds in the payment package. That does not make them booking lifecycle concepts:
-never reference financial or payment types from `BookingLifecycle`. Booking identity in particular (how a quote and its booking are known
-to be the same booking) is currently application-owned. See [Open questions](#open-questions).
+never reference customer, booking, financial, or payment types from `BookingLifecycle`.
+Applications may carry the library's `Booking.Id` through their own phase models.
 
 ## New lifecycle phase checklist
 
@@ -252,6 +262,26 @@ to `InitialRequest`, or similar. An illegal edge must have no method at all.
 
 # Financial document domain
 
+## Customer and booking record boundary
+
+`Customer` contains exactly `id`, `name`, `email`, and `phoneNumber`. It holds no
+address, booking history, payment details, or operational contact information. New
+`Customer.Id`, `Booking.Id`, `BookingContact.Id`, and `BookingLocation.Id` types wrap UUIDs
+to keep these peer references distinct. Existing financial/payment record IDs stay raw
+UUIDs; this focused exception does not require a repository-wide identifier migration.
+
+`Booking` holds only `id` and `customerId`. `BookingContact.CustomerContact` holds a
+`customerId` without copying identity PII; `ExternalContact` holds a name and at least
+one contact method without creating a customer. `BookingLocation` holds the postal
+address for one booking. Contacts and locations have independent IDs and contain only a
+booking reference, so applications can remove operational records independently later.
+This library implements neither retention policy nor purging. Applications enforce
+collection-wide cardinality, including at most one active location per booking.
+
+Financial document lineages hold a required `customerId` through every snapshot and
+stage. Documents contain no customer name, email, phone, or event address. Payment and
+refund records do not repeat `customerId`.
+
 These rules govern `io.github.castab.commerce.financial`. A `FinancialDocument` is one
 immutable snapshot of a commercial document. The domain describes what is charged and how
 that description evolves. It does not describe settlement.
@@ -287,6 +317,8 @@ These are non-negotiable without an explicit decision from the maintainer.
 10. **History is referenced, never embedded.** A snapshot holds no other snapshot and no
     reference object to one. History is reached only through `FinancialDocumentHistory`,
     one explicit lookup at a time.
+11. **Customer identity is stable.** Every snapshot carries the same `Customer.Id` as
+    its lineage's first snapshot; revisions and stage transitions preserve it.
 
 The topology, which code, KDoc, README, and tests must all agree on:
 
@@ -306,7 +338,7 @@ Entry points: Estimate.create, Quote.create, Invoice.create
 - The stages are **not** data classes. A `copy()` would let callers forge versions,
   previous-version links, or stages. Equality, `hashCode`, and `toString` are implemented
   once, finally, on `FinancialDocument`.
-- `restore(id, version, lineItems)` exists on each stage only so persistence adapters and
+- `restore(id, version, lineItems, customerId)` exists on each stage only so persistence adapters and
   `FinancialDocumentHistory` implementations can rebuild stored snapshots. It derives
   `previousVersion` from `version` and cannot express any other link. Do not add
   parameters that let callers choose `previousVersion`, totals, or anything else derived.
@@ -315,9 +347,10 @@ Entry points: Estimate.create, Quote.create, Invoice.create
 
 ## Values and collections
 
-- Every identifier is a `java.util.UUID`. Do not add id wrapper types (`FinancialDocumentId`,
-  `LineItemId`, ...). Do not add an id to `ChangeOrder` for symmetry. `Version` is a domain
-  value, not an identifier.
+- Existing financial identifiers are `java.util.UUID`; do not add wrapper types
+  (`FinancialDocumentId`, `LineItemId`, ...). `Customer.Id` is a required cross-domain
+  reference, not a financial document ID. Do not add an id to `ChangeOrder` for symmetry.
+  `Version` is a domain value, not an identifier.
 - Money is `BigDecimal` plus `java.util.Currency`. Never `Double` or `Float`. Don't add
   rounding, scale normalization, currency conversion, or exchange rates.
 - `LineItem.quantity == null` means flat-priced (subtotal = price). Otherwise
@@ -355,7 +388,7 @@ ledgers. Settlement is a separate bounded context, modeled by the
 [payment reconciliation domain](#payment-reconciliation-domain), which references a
 document by `FinancialDocumentReference`. The financial package never imports it.
 
-Also out of scope: pricing rules, tax calculation, discount engines, customer or
+Also out of scope: pricing rules, tax calculation, discount engines, customer PII or
 counterparty models, dates and due dates, document numbering, and serialization
 annotations. These are application data unless an architectural decision says otherwise.
 
@@ -605,8 +638,11 @@ dependency just to support CI or publishing.
   injection, or coroutines to the main source set.
 - Keep Java callers in mind: `@JvmStatic` on companion factories, `@JvmField` on
   constants, `@JvmSynthetic` on internal helpers that must not be callable from Java.
-- The build enables **`explicitApi()`**. Every public declaration needs an explicit
-  visibility modifier (`public`) and, in practice, KDoc.
+- Do not use explicit `public` visibility modifiers in Kotlin when `public` is already the language default. Prefer idiomatic implicit public visibility. Use explicit visibility modifiers only when they change semantics, such as `private`, `protected`, or `internal`.
+- Keep explicit API types and KDoc for published declarations. Kotlin's `explicitApi()`
+  compiler mode is disabled because it requires redundant `public` modifiers. There is
+  no ktlint standard rule configured specifically for redundant `public`; review that
+  convention when editing public API declarations.
 - KDoc describes semantics: what a phase means, whether it is active or terminal, which
   edges are legal, and that implementations are application-owned. It does not describe
   implementation trivia or business policy. Never write something like "called after a
@@ -615,6 +651,13 @@ dependency just to support CI or publishing.
   contract, such as a history returning the wrong snapshot, fails with `check`
   (`IllegalStateException`).
 - Code style: `kotlin.code.style=official`.
+- The Jlleitschuh ktlint Gradle plugin (14.2.0) checks Kotlin sources and scripts during
+  `check`/`build`. Run `./gradlew ktlintCheck` before committing and
+  `./gradlew ktlintFormat` to format all Kotlin sources and scripts. `compileKotlin`
+  formats main sources first; in `build`, the lint check runs before that formatting.
+  Keep `.editorconfig` as the shared source of ktlint settings. A baseline can be
+  generated with `ktlintGenerateBaseline` for existing violations, but format tasks
+  ignore baselines. Do not add another overlapping formatter.
 
 ## Testing expectations
 
@@ -688,7 +731,7 @@ methods are the state machine".
 ## Scope discipline
 
 When solving a focused issue, do not opportunistically add persistence, serialization,
-payment logic outside the payment package, customer models, workflow engines, generic transition contexts, event
+payment logic outside the payment package, speculative customer/CRM fields, workflow engines, generic transition contexts, event
 buses, new domains, or new modules unless the requested work requires them. Do not couple
 the booking lifecycle to the other domains, and do not make the financial documents depend
 on payments. Prefer narrow architectural evolution.
@@ -713,10 +756,10 @@ or in a future, separate module.
 
 These are intentionally unresolved. Do not settle them incidentally.
 
-- **Booking identity.** The protocol does not say how an `InitialRequest`, its `Quote`, and
-  its `Booked` model are known to be the same booking. Adopters currently carry their own
-  identifier. A future persistence module will likely need an answer. Decide it
-  explicitly, and don't bolt an `id` property onto the phase interfaces.
+- **Booking identity through phases.** `Booking.Id` now identifies a booking and `Booking`
+  links it to `Customer.Id`. The protocol does not require phase models to carry that ID.
+  Applications decide how to preserve it through transitions; do not bolt an `id`
+  property onto the phase interfaces.
 - **Phase exclusivity enforcement.** One class can currently implement several phases.
   Whether to enforce exclusivity at the type level is undecided.
 - **Booking and financial coupling.** The two domains are deliberately independent.
@@ -731,7 +774,8 @@ These are intentionally unresolved. Do not settle them incidentally.
   accepted. Whether to reject histories that were inconsistent at some earlier moment is
   undecided.
 - **Financial document numbering, dates, and counterparties.** Human-facing document
-  numbers, issue and due dates, and customer references are application data today.
+  numbers, issue and due dates, and billing snapshots remain application data. The
+  `Customer.Id` reference is now part of each financial document snapshot.
 - **A shared `Active.cancel()`.** All active phases can be cancelled, but `cancel()` is
   declared per phase. Code holding only an `Active` must use `when` to cancel. Hoisting
   `cancel()` to `Active` would change the public API shape, so leave that for a deliberate

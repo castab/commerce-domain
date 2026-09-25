@@ -17,10 +17,11 @@ import java.util.UUID
  * The list of changes is copied on construction, so later changes to the caller's list do
  * not affect the change order. A change order must contain at least one change.
  */
-public class ChangeOrder(changes: List<Change>) {
-
+class ChangeOrder(
+    changes: List<Change>,
+) {
     /** The changes to apply, in order. Never empty. */
-    public val changes: List<Change> = changes.toImmutableList()
+    val changes: List<Change> = changes.toImmutableList()
 
     init {
         require(this.changes.isNotEmpty()) { "A change order must contain at least one change" }
@@ -33,15 +34,14 @@ public class ChangeOrder(changes: List<Change>) {
     override fun toString(): String = "ChangeOrder(changes=$changes)"
 
     /** One step of a [ChangeOrder]. */
-    public sealed interface Change {
-
+    sealed interface Change {
         /**
          * Appends [lineItem] to the document.
          *
          * Fails if the document already contains a line item with the same id.
          */
-        public data class AddLineItem(
-            public val lineItem: LineItem,
+        data class AddLineItem(
+            val lineItem: LineItem,
         ) : Change
 
         /**
@@ -53,9 +53,9 @@ public class ChangeOrder(changes: List<Change>) {
          * @throws IllegalArgumentException on construction if `replacement.id` differs from
          * [lineItemId].
          */
-        public data class ReplaceLineItem(
-            public val lineItemId: UUID,
-            public val replacement: LineItem,
+        data class ReplaceLineItem(
+            val lineItemId: UUID,
+            val replacement: LineItem,
         ) : Change {
             init {
                 require(replacement.id == lineItemId) {
@@ -69,8 +69,8 @@ public class ChangeOrder(changes: List<Change>) {
          *
          * Fails if the document has no line item with that id.
          */
-        public data class RemoveLineItem(
-            public val lineItemId: UUID,
+        data class RemoveLineItem(
+            val lineItemId: UUID,
         ) : Change
     }
 }
