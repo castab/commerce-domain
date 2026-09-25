@@ -38,7 +38,6 @@ serialization, and payment concerns. Its only runtime dependency is `kotlin-stdl
 - [Requirements](#requirements)
 - [Building and testing](#building-and-testing)
 - [Releasing](#releasing)
-- [Migrating from `booking-lifecycle`](#migrating-from-booking-lifecycle)
 - [Current scope](#current-scope)
 - [Future direction](#future-direction)
 - [License](#license)
@@ -1330,29 +1329,6 @@ ever written into source-controlled files.
 **Published versions are immutable.** Never try to overwrite a published version. If
 `0.0.1` has a problem, fix it and release `0.0.2`. If a Publish run fails before
 uploading anything (for example, a transient error), use **Re-run jobs** on that run.
-
-## Migrating from `booking-lifecycle`
-
-Earlier releases were published as `io.github.castab:booking-lifecycle` with the package
-`io.github.castab.bookinglifecycle`. Both have changed:
-
-| | Before | Now |
-|---|---|---|
-| Maven coordinates | `io.github.castab:booking-lifecycle` | `io.github.castab:commerce-domain` |
-| Booking lifecycle package | `io.github.castab.bookinglifecycle` | `io.github.castab.commerce.booking.lifecycle` |
-
-To migrate, change the dependency and replace the import prefix:
-
-```kotlin
-// before
-import io.github.castab.bookinglifecycle.BookingLifecycle
-// after
-import io.github.castab.commerce.booking.lifecycle.BookingLifecycle
-```
-
-The booking lifecycle API itself is unchanged: the same phases, transitions, and
-semantics. No compatibility aliases are kept in the old package. Versions already
-published under `booking-lifecycle`, if any, stay available but receive no further releases.
 
 ## Current scope
 

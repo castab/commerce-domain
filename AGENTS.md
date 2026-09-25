@@ -54,9 +54,6 @@ booking lifecycle itself, it probably does not belong in the booking lifecycle A
 Maven coordinates: `io.github.castab:commerce-domain` (the artifactId is `rootProject.name`
 in `settings.gradle.kts`), published to the GitHub Packages registry of the repository that
 runs the Publish workflow (currently `https://maven.pkg.github.com/castab/booking-lifecycle`).
-The artifact was previously published as `io.github.castab:booking-lifecycle`, with the
-booking lifecycle in package `io.github.castab.bookinglifecycle`. No aliases are kept for
-the old package.
 
 # Booking lifecycle domain
 
