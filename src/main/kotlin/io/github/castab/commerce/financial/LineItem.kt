@@ -35,13 +35,13 @@ import java.util.UUID
  * @property description Short description of what is being charged for. Must not be blank.
  * @property subDescription Optional secondary text, such as details or notes.
  */
-public data class LineItem(
-    public val id: UUID,
-    public val description: String,
-    public val subDescription: String? = null,
-    public val quantity: BigDecimal?,
-    public val price: Money,
-    public val taxAmount: Money,
+data class LineItem(
+    val id: UUID,
+    val description: String,
+    val subDescription: String? = null,
+    val quantity: BigDecimal?,
+    val price: Money,
+    val taxAmount: Money,
 ) {
 
     init {
@@ -53,12 +53,12 @@ public data class LineItem(
     }
 
     /** The currency of this line: the currency of both [price] and [taxAmount]. */
-    public val currency: Currency
+    val currency: Currency
         get() = price.currency
 
     /** The line amount before tax: `price × quantity`, or [price] when [quantity] is `null`. */
-    public val subtotal: Money = if (quantity == null) price else price * quantity
+    val subtotal: Money = if (quantity == null) price else price * quantity
 
     /** The line amount including tax: `subtotal + taxAmount`. */
-    public val total: Money = subtotal + taxAmount
+    val total: Money = subtotal + taxAmount
 }

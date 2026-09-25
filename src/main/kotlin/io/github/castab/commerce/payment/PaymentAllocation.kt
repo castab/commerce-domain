@@ -50,20 +50,20 @@ import java.util.UUID
  * [PaymentAllocationReversal], and money refunded out of an allocation is recorded by a
  * [RefundAllocation].
  */
-public class PaymentAllocation private constructor(
+class PaymentAllocation private constructor(
     /** The identity of this allocation, chosen by the application. */
-    public val id: UUID,
+    val id: UUID,
     /** The [PaymentRecord.id] of the payment whose money was applied. */
-    public val paymentReference: UUID,
+    val paymentReference: UUID,
     /**
      * The exact financial-document snapshot the money was applied to. Its `id` also
      * identifies the document's whole lineage.
      */
-    public val financialDocumentReference: FinancialDocumentReference,
+    val financialDocumentReference: FinancialDocumentReference,
     /** The amount applied. Strictly positive, in the payment's currency. */
-    public val amount: Money,
+    val amount: Money,
     /** When the money was applied. */
-    public val allocatedAt: Instant,
+    val allocatedAt: Instant,
 ) {
 
     init {
@@ -71,7 +71,7 @@ public class PaymentAllocation private constructor(
     }
 
     /** The currency of the allocation: the currency of [amount]. */
-    public val currency: Currency
+    val currency: Currency
         get() = amount.currency
 
     override fun equals(other: Any?): Boolean =
@@ -96,7 +96,7 @@ public class PaymentAllocation private constructor(
         "PaymentAllocation(id=$id, paymentReference=$paymentReference, " +
             "financialDocumentReference=$financialDocumentReference, amount=$amount, allocatedAt=$allocatedAt)"
 
-    public companion object {
+    companion object {
 
         /**
          * Records that [amount] of [payment] was applied to [financialDocument], as that
@@ -113,7 +113,7 @@ public class PaymentAllocation private constructor(
          * the currency of both the payment and the document, or exceeds the payment amount.
          */
         @JvmStatic
-        public fun create(
+        fun create(
             id: UUID,
             payment: PaymentRecord,
             financialDocument: FinancialDocument,
@@ -146,7 +146,7 @@ public class PaymentAllocation private constructor(
          * @throws IllegalArgumentException if [amount] is not strictly positive.
          */
         @JvmStatic
-        public fun restore(
+        fun restore(
             id: UUID,
             paymentReference: UUID,
             financialDocumentReference: FinancialDocumentReference,

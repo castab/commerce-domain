@@ -44,35 +44,35 @@ import java.util.UUID
  * accepted when the combined records are consistent. The library does not interpret the
  * order of application-supplied timestamps.
  */
-public class PaymentReconciliation private constructor(
+class PaymentReconciliation private constructor(
     /** The [PaymentRecord.id] of the reconciled payment. */
-    public val paymentReference: UUID,
+    val paymentReference: UUID,
     /** The amount received. */
-    public val paymentAmount: Money,
+    val paymentAmount: Money,
     /** The sum of every refund of the payment. Never more than [paymentAmount]. */
-    public val totalRefunded: Money,
+    val totalRefunded: Money,
     /** The sum of every allocation of the payment, as originally recorded. */
-    public val grossAllocated: Money,
+    val grossAllocated: Money,
     /** The sum of every reversal of the payment's allocations. */
-    public val allocationReversals: Money,
+    val allocationReversals: Money,
     /** The sum of every refund allocation that unwinds the payment's allocations. */
-    public val refundAllocations: Money,
+    val refundAllocations: Money,
 ) {
 
     /** The money the business kept: [paymentAmount] minus [totalRefunded]. */
-    public val netReceived: Money = paymentAmount - totalRefunded
+    val netReceived: Money = paymentAmount - totalRefunded
 
     /**
      * The money currently applied to documents: [grossAllocated] minus
      * [allocationReversals] and [refundAllocations].
      */
-    public val netAllocated: Money = grossAllocated - allocationReversals - refundAllocations
+    val netAllocated: Money = grossAllocated - allocationReversals - refundAllocations
 
     /** The kept money not applied to any document: [netReceived] minus [netAllocated]. Never negative. */
-    public val unallocated: Money = netReceived - netAllocated
+    val unallocated: Money = netReceived - netAllocated
 
     /** The currency of the payment and of every amount here. */
-    public val currency: Currency
+    val currency: Currency
         get() = paymentAmount.currency
 
     override fun equals(other: Any?): Boolean =
@@ -101,7 +101,7 @@ public class PaymentReconciliation private constructor(
             "allocationReversals=$allocationReversals, refundAllocations=$refundAllocations, " +
             "netAllocated=$netAllocated, unallocated=$unallocated)"
 
-    public companion object {
+    companion object {
 
         /**
          * Reconciles [payment] against the supplied records.
@@ -128,7 +128,7 @@ public class PaymentReconciliation private constructor(
          */
         @JvmStatic
         @JvmOverloads
-        public fun reconcile(
+        fun reconcile(
             payment: PaymentRecord,
             allocations: Collection<PaymentAllocation>,
             allocationReversals: Collection<PaymentAllocationReversal> = emptyList(),

@@ -18,9 +18,9 @@ package io.github.castab.commerce.payment
  * be blank.
  * @property reference The transaction's identifier in that system. Must not be blank.
  */
-public data class ExternalPaymentReference(
-    public val provider: String,
-    public val reference: String,
+data class ExternalPaymentReference(
+    val provider: String,
+    val reference: String,
 ) {
     init {
         require(provider.isNotBlank()) { "An external payment reference must have a non-blank provider" }

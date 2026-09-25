@@ -17,9 +17,9 @@ import java.util.Currency
  * `10.0 USD` and `10.00 USD` are numerically equal but not `==`. Use
  * [BigDecimal.compareTo] on [amount] when numeric comparison is intended.
  */
-public data class Money(
-    public val amount: BigDecimal,
-    public val currency: Currency,
+data class Money(
+    val amount: BigDecimal,
+    val currency: Currency,
 ) {
 
     /**
@@ -27,7 +27,7 @@ public data class Money(
      *
      * @throws IllegalArgumentException if [other] is in a different currency.
      */
-    public operator fun plus(other: Money): Money {
+    operator fun plus(other: Money): Money {
         require(other.currency == currency) {
             "Cannot add ${other.currency.currencyCode} to ${currency.currencyCode}: currencies must match"
         }
@@ -39,7 +39,7 @@ public data class Money(
      *
      * @throws IllegalArgumentException if [other] is in a different currency.
      */
-    public operator fun minus(other: Money): Money {
+    operator fun minus(other: Money): Money {
         require(other.currency == currency) {
             "Cannot subtract ${other.currency.currencyCode} from ${currency.currencyCode}: currencies must match"
         }
@@ -47,14 +47,14 @@ public data class Money(
     }
 
     /** The exact product of this amount and [multiplier], in the same currency. */
-    public operator fun times(multiplier: BigDecimal): Money = Money(amount.multiply(multiplier), currency)
+    operator fun times(multiplier: BigDecimal): Money = Money(amount.multiply(multiplier), currency)
 
     override fun toString(): String = "${amount.toPlainString()} ${currency.currencyCode}"
 
-    public companion object {
+    companion object {
 
         /** A zero amount in [currency]. */
         @JvmStatic
-        public fun zero(currency: Currency): Money = Money(BigDecimal.ZERO, currency)
+        fun zero(currency: Currency): Money = Money(BigDecimal.ZERO, currency)
     }
 }

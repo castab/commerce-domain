@@ -36,17 +36,17 @@ import java.util.UUID
  * of an allocation together stay within its amount depends on records this one cannot see;
  * [PaymentReconciliation] and [FinancialDocumentReconciliation] check that.
  */
-public class PaymentAllocationReversal private constructor(
+class PaymentAllocationReversal private constructor(
     /** The identity of this reversal, chosen by the application. */
-    public val id: UUID,
+    val id: UUID,
     /** The [PaymentAllocation.id] of the allocation being reversed. */
-    public val paymentAllocationReference: UUID,
+    val paymentAllocationReference: UUID,
     /** The amount no longer applied. Strictly positive, in the allocation's currency. */
-    public val amount: Money,
+    val amount: Money,
     /** When the reversal was recorded. */
-    public val reversedAt: Instant,
+    val reversedAt: Instant,
     /** Why the allocation was reversed, for auditing, or `null`. Never blank. */
-    public val reason: String?,
+    val reason: String?,
 ) {
 
     init {
@@ -59,7 +59,7 @@ public class PaymentAllocationReversal private constructor(
     }
 
     /** The currency of the reversal: the currency of [amount]. */
-    public val currency: Currency
+    val currency: Currency
         get() = amount.currency
 
     override fun equals(other: Any?): Boolean =
@@ -84,7 +84,7 @@ public class PaymentAllocationReversal private constructor(
         "PaymentAllocationReversal(id=$id, paymentAllocationReference=$paymentAllocationReference, " +
             "amount=$amount, reversedAt=$reversedAt, reason=$reason)"
 
-    public companion object {
+    companion object {
 
         /**
          * Records that [amount] of [allocation] is reversed. The reversal stores
@@ -96,7 +96,7 @@ public class PaymentAllocationReversal private constructor(
          */
         @JvmStatic
         @JvmOverloads
-        public fun create(
+        fun create(
             id: UUID,
             allocation: PaymentAllocation,
             amount: Money,
@@ -123,7 +123,7 @@ public class PaymentAllocationReversal private constructor(
          */
         @JvmStatic
         @JvmOverloads
-        public fun restore(
+        fun restore(
             id: UUID,
             paymentAllocationReference: UUID,
             amount: Money,

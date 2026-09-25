@@ -3,16 +3,16 @@ package io.github.castab.commerce.booking
 import java.util.UUID
 
 /** Identity of one independently stored booking location. */
-public data class BookingLocationId(public val value: UUID)
+data class BookingLocationId(val value: UUID)
 
 /** Postal or service address; field formats are intentionally jurisdiction-neutral. */
-public data class PostalAddress(
-    public val addressLine1: String,
-    public val addressLine2: String? = null,
-    public val city: String,
-    public val region: String? = null,
-    public val postalCode: String? = null,
-    public val countryCode: String? = null,
+data class PostalAddress(
+    val addressLine1: String,
+    val addressLine2: String? = null,
+    val city: String,
+    val region: String? = null,
+    val postalCode: String? = null,
+    val countryCode: String? = null,
 ) {
     init {
         require(addressLine1.isNotBlank()) { "Address line 1 must not be blank" }
@@ -25,8 +25,8 @@ public data class PostalAddress(
 }
 
 /** Location for one booking, separate from customer identity and contact records. */
-public data class BookingLocation(
-    public val id: BookingLocationId,
-    public val bookingId: BookingId,
-    public val address: PostalAddress,
+data class BookingLocation(
+    val id: BookingLocationId,
+    val bookingId: BookingId,
+    val address: PostalAddress,
 )

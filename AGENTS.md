@@ -638,8 +638,10 @@ dependency just to support CI or publishing.
   injection, or coroutines to the main source set.
 - Keep Java callers in mind: `@JvmStatic` on companion factories, `@JvmField` on
   constants, `@JvmSynthetic` on internal helpers that must not be callable from Java.
-- The build enables **`explicitApi()`**. Every public declaration needs an explicit
-  visibility modifier (`public`) and, in practice, KDoc.
+- Do not use explicit `public` visibility modifiers in Kotlin when `public` is already the language default. Prefer idiomatic implicit public visibility. Use explicit visibility modifiers only when they change semantics, such as `private`, `protected`, or `internal`.
+- Keep explicit API types and KDoc for published declarations. Kotlin's `explicitApi()`
+  compiler mode is disabled because it requires redundant `public` modifiers. There is
+  currently no Kotlin formatter or linter configured to enforce this style automatically.
 - KDoc describes semantics: what a phase means, whether it is active or terminal, which
   edges are legal, and that implementations are application-owned. It does not describe
   implementation trivia or business policy. Never write something like "called after a

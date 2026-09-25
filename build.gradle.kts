@@ -43,7 +43,6 @@ java {
 }
 
 kotlin {
-    explicitApi()
     jvmToolchain(requiredJavaVersion)
     compilerOptions {
         jvmTarget = JvmTarget.JVM_25

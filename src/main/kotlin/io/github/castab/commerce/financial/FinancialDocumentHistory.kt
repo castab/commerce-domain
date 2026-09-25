@@ -21,7 +21,7 @@ import java.util.UUID
  * Writing snapshots, and rejecting a conflicting write of an `(id, version)` that already
  * exists, is the persistence layer's responsibility and is not part of this interface.
  */
-public interface FinancialDocumentHistory {
+interface FinancialDocumentHistory {
 
     /**
      * Returns the snapshot identified by [reference], or `null` if it is not stored.
@@ -29,13 +29,13 @@ public interface FinancialDocumentHistory {
  * A returned snapshot must have exactly the referenced id and version. The lookup
  * extensions also verify the customer identity against the requesting snapshot.
      */
-    public fun retrieveVersion(reference: FinancialDocumentReference): FinancialDocument?
+    fun retrieveVersion(reference: FinancialDocumentReference): FinancialDocument?
 
     /**
      * Returns the stored snapshot of lineage [id] with the highest version, or `null` if no
      * snapshot of that lineage is stored.
      */
-    public fun retrieveLatestVersion(id: UUID): FinancialDocument?
+    fun retrieveLatestVersion(id: UUID): FinancialDocument?
 }
 
 /**
@@ -48,7 +48,7 @@ public interface FinancialDocumentHistory {
  *
  * @throws IllegalStateException if [from] returns a different reference or customer.
  */
-public fun FinancialDocument.retrievePreviousVersion(from: FinancialDocumentHistory): FinancialDocument? {
+fun FinancialDocument.retrievePreviousVersion(from: FinancialDocumentHistory): FinancialDocument? {
     val previous = previousReference ?: return null
     return from.retrieveVersion(previous).checkMatches(previous, customerId)
 }
@@ -60,7 +60,7 @@ public fun FinancialDocument.retrievePreviousVersion(from: FinancialDocumentHist
  *
  * @throws IllegalStateException if [from] returns a different reference or customer.
  */
-public fun FinancialDocument.retrieveVersion(version: Version, from: FinancialDocumentHistory): FinancialDocument? {
+fun FinancialDocument.retrieveVersion(version: Version, from: FinancialDocumentHistory): FinancialDocument? {
     val reference = FinancialDocumentReference(id, version)
     return from.retrieveVersion(reference).checkMatches(reference, customerId)
 }
@@ -72,7 +72,7 @@ public fun FinancialDocument.retrieveVersion(version: Version, from: FinancialDo
  *
  * @throws IllegalStateException if [from] returns another lineage or customer.
  */
-public fun FinancialDocument.retrieveLatestVersion(from: FinancialDocumentHistory): FinancialDocument? {
+fun FinancialDocument.retrieveLatestVersion(from: FinancialDocumentHistory): FinancialDocument? {
     val latest = from.retrieveLatestVersion(id)
     check(latest == null || (latest.id == id && latest.customerId == customerId)) {
         "History returned financial document ${latest?.id} for customer ${latest?.customerId} " +

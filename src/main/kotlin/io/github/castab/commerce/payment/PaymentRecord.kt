@@ -34,20 +34,20 @@ import java.util.UUID
  *
  * @throws IllegalArgumentException if [amount] is not strictly positive.
  */
-public class PaymentRecord @JvmOverloads constructor(
+class PaymentRecord @JvmOverloads constructor(
     /** The identity of this payment, chosen by the application. */
-    public val id: UUID,
+    val id: UUID,
     /** The money received. Strictly positive. Its currency is the payment's [currency]. */
-    public val amount: Money,
+    val amount: Money,
     /** The instrument the money was received through. */
-    public val method: PaymentMethod,
+    val method: PaymentMethod,
     /** When the money was received. */
-    public val receivedAt: Instant,
+    val receivedAt: Instant,
     /**
      * The payment's identity in an external system, such as a processor's transaction id,
      * or `null` when there is none, as for cash, a check, or a manually recorded payment.
      */
-    public val externalReference: ExternalPaymentReference? = null,
+    val externalReference: ExternalPaymentReference? = null,
 ) {
 
     init {
@@ -55,7 +55,7 @@ public class PaymentRecord @JvmOverloads constructor(
     }
 
     /** The currency of the payment: the currency of [amount]. */
-    public val currency: Currency
+    val currency: Currency
         get() = amount.currency
 
     override fun equals(other: Any?): Boolean =
