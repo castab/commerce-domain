@@ -1,6 +1,6 @@
 # commerce-domain
 
-[![CI](https://github.com/castab/booking-lifecycle/actions/workflows/ci.yml/badge.svg)](https://github.com/castab/booking-lifecycle/actions/workflows/ci.yml)
+[![CI](https://github.com/castab/commerce-domain/actions/workflows/ci.yml/badge.svg)](https://github.com/castab/commerce-domain/actions/workflows/ci.yml)
 
 A small Kotlin/JVM library of immutable commerce domain models and lifecycle APIs that
 multiple applications can share.
@@ -49,8 +49,8 @@ Releases are published to **GitHub Packages** as a Maven artifact:
 | | |
 |---|---|
 | Coordinates | `io.github.castab:commerce-domain:<version>` |
-| Repository | `https://maven.pkg.github.com/castab/booking-lifecycle` (the GitHub repository that publishes the package) |
-| Versions | [GitHub Releases](https://github.com/castab/booking-lifecycle/releases). A release tagged `v0.0.1` is published as version `0.0.1`. |
+| Repository | `https://maven.pkg.github.com/castab/commerce-domain` (the GitHub repository that publishes the package) |
+| Versions | [GitHub Releases](https://github.com/castab/commerce-domain/releases). A release tagged `v0.0.1` is published as version `0.0.1`. |
 
 A consuming build needs **both** the repository declaration and the dependency.
 `mavenCentral()` alone is not enough.
@@ -62,7 +62,7 @@ Gradle (Kotlin DSL):
 repositories {
     mavenCentral()
     maven {
-        url = uri("https://maven.pkg.github.com/castab/booking-lifecycle")
+        url = uri("https://maven.pkg.github.com/castab/commerce-domain")
         credentials {
             username = providers.gradleProperty("gpr.user").orNull ?: System.getenv("GITHUB_ACTOR")
             password = providers.gradleProperty("gpr.key").orNull ?: System.getenv("GITHUB_TOKEN")
@@ -86,7 +86,7 @@ Maven:
 <repositories>
   <repository>
     <id>github-castab</id>
-    <url>https://maven.pkg.github.com/castab/booking-lifecycle</url>
+    <url>https://maven.pkg.github.com/castab/commerce-domain</url>
   </repository>
 </repositories>
 

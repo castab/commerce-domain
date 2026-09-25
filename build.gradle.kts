@@ -19,7 +19,7 @@ version = providers.gradleProperty("version").getOrElse("0.0.0-SNAPSHOT")
 // artifactId comes from rootProject.name (settings.gradle.kts), so renaming the
 // GitHub repository does not change the published coordinates.
 val githubRepository = providers.environmentVariable("GITHUB_REPOSITORY")
-    .getOrElse("castab/booking-lifecycle")
+    .getOrElse("castab/commerce-domain")
 
 // ---------------------------------------------------------------------------
 // Java 25 is an intentional, hard requirement of this library.
