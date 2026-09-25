@@ -59,12 +59,15 @@ import java.util.UUID
  * layer must reject the second write, typically with a uniqueness constraint or an
  * optimistic-concurrency check on `(id, version)`.
  *
- * ## Out of scope
+ * ## Settlement is outside the document
  *
  * A financial document describes what is being charged and how that description evolved.
- * It does not describe settlement: payments, balances, payment status, refunds, and
- * payment processors belong to a separate, application-owned bounded context that
- * references a document by its [reference].
+ * It does not describe settlement and holds no settlement state: no amount paid, balance,
+ * payment status, payments, or refunds. Settlement is a separate bounded context that
+ * references documents, never the reverse. This library models it in
+ * `io.github.castab.commerce.payment`, where payment allocations reference a document
+ * snapshot by its [reference] and balances are derived, never stored. Applications still
+ * own persistence, processor integration, and payment policy.
  */
 public sealed class FinancialDocument(
     /** The identity of the lineage this snapshot belongs to. Shared by every version. */
@@ -294,7 +297,8 @@ public sealed class FinancialDocument(
      * with [changeOrder] and is the final stage: it has no further lifecycle transition.
      *
      * An invoice describes what is owed, not whether or how it has been paid. Payment
-     * status, amounts paid, and balances are deliberately absent.
+     * status, amounts paid, and balances are deliberately absent. They are derived outside
+     * the document, by the `io.github.castab.commerce.payment` domain.
      */
     public class Invoice private constructor(
         id: UUID,

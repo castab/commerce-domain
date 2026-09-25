@@ -34,6 +34,22 @@ class MoneySpec : FunSpec({
         shouldThrow<IllegalArgumentException> { Money.zero(EUR) + usd("1") }
     }
 
+    test("subtracts amounts in the same currency exactly, without rounding") {
+        usd("10.25") - usd("0.75") shouldBe usd("9.50")
+        usd("0.3") - usd("0.1") shouldBe usd("0.2")
+        usd("100") - usd("0.001") shouldBe usd("99.999")
+    }
+
+    test("subtraction may produce zero or a negative amount") {
+        (usd("5.00") - usd("5.00")).amount.compareTo(BigDecimal.ZERO) shouldBe 0
+        usd("5") - usd("7.50") shouldBe usd("-2.50")
+    }
+
+    test("subtracting a different currency fails instead of converting") {
+        shouldThrow<IllegalArgumentException> { usd("1") - eur("1") }.message shouldContain "EUR"
+        shouldThrow<IllegalArgumentException> { Money.zero(EUR) - usd("1") }
+    }
+
     test("negative amounts are allowed, for discounts and credits") {
         usd("100") + usd("-15") shouldBe usd("85")
     }
