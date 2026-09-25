@@ -11,21 +11,34 @@ and why seemingly reasonable changes can be architecturally wrong.
 
 `commerce-domain` is a reusable library of immutable commerce domain models and lifecycle
 APIs, shared by multiple applications. Each domain lives in its own package beneath
-`io.github.castab.commerce` and is independent of the others:
+`io.github.castab.commerce`:
 
 | Domain | Package | Style |
 |---|---|---|
 | Booking lifecycle | `io.github.castab.commerce.booking.lifecycle` | A type-level protocol. Adopters' own types implement the phases. The library owns no booking data. |
 | Financial documents | `io.github.castab.commerce.financial` | Concrete, library-owned immutable value types (`Estimate`, `Quote`, `Invoice`) whose invariants the library enforces. |
+| Payment reconciliation | `io.github.castab.commerce.payment` | Concrete, library-owned immutable records (payments, allocations, allocation reversals, refunds, refund allocations) and reconciliation derived from records the application supplies. |
 
-The two styles are deliberate and not interchangeable. Read the rules for the domain you
-are changing: [Booking lifecycle domain](#booking-lifecycle-domain) and
-[Financial document domain](#financial-document-domain). The build, dependency,
+The styles are deliberate and not interchangeable. Read the rules for the domain you
+are changing: [Booking lifecycle domain](#booking-lifecycle-domain),
+[Financial document domain](#financial-document-domain), and
+[Payment reconciliation domain](#payment-reconciliation-domain). The build, dependency,
 toolchain, and publication rules apply to the whole repository.
 
-Domains must not depend on each other. Neither package imports the other. Applications
-compose them (for example, a booking `Quote` phase model that holds a
-`FinancialDocument.Quote`). The library does not.
+Dependencies between domains are fixed:
+
+```text
+booking.lifecycle    imports nothing from the other domains, and nothing imports it
+financial            imports nothing from the other domains
+payment ──imports──→ financial   (FinancialDocument, FinancialDocumentReference, Money)
+```
+
+- The booking lifecycle and the financial documents never import each other. Applications
+  compose them (for example, a booking `Quote` phase model that holds a
+  `FinancialDocument.Quote`). The library does not.
+- The payment domain references financial documents, one way only. `financial` must never
+  import `payment`: a document does not own, hold, or know about its settlement. The
+  payment domain never imports the booking lifecycle.
 
 For the booking lifecycle:
 
@@ -40,11 +53,14 @@ booking lifecycle itself, it probably does not belong in the booking lifecycle A
 | Path | Contents |
 |---|---|
 | `src/main/kotlin/io/github/castab/commerce/booking/lifecycle/BookingLifecycle.kt` | The entire booking lifecycle API. |
+| `src/main/kotlin/io/github/castab/commerce/payment/` | The payment reconciliation API: `PaymentMethod.kt`, `ExternalPaymentReference.kt`, `ExternalRefundReference.kt`, `PaymentRecord.kt`, `PaymentAllocation.kt`, `PaymentAllocationReversal.kt`, `RefundRecord.kt`, `RefundAllocation.kt`, `PaymentReconciliation.kt` (payment-level reconciliation and the shared validation helpers), and `FinancialDocumentReconciliation.kt`. |
 | `src/main/kotlin/io/github/castab/commerce/financial/` | The financial document API: `FinancialDocument.kt` (the sealed class, its three stages, and change application), `Version.kt`, `Money.kt`, `LineItem.kt`, `ChangeOrder.kt`, `FinancialDocumentReference.kt`, and `FinancialDocumentHistory.kt` (the history SPI and its lookup extensions). |
 | `src/test/kotlin/io/github/castab/commerce/booking/lifecycle/BookingLifecycleSpec.kt` | Kotest `FunSpec` for the booking lifecycle contract. |
 | `src/test/kotlin/io/github/castab/commerce/booking/lifecycle/fixtures/TestBookingModels.kt` | Test-only "application-owned" booking models. |
 | `src/test/kotlin/io/github/castab/commerce/financial/*Spec.kt` | Kotest specs for the financial domain: `FinancialDocumentSpec`, `ChangeOrderSpec`, `FinancialDocumentHistorySpec`, `LineItemSpec`, `MoneySpec`, `VersionSpec`. |
 | `src/test/kotlin/io/github/castab/commerce/financial/fixtures/TestFinancialModels.kt` | Test-only money and line item helpers and an in-memory `FinancialDocumentHistory`. |
+| `src/test/kotlin/io/github/castab/commerce/payment/*Spec.kt` | Kotest specs for the payment domain: `PaymentRecordSpec`, `PaymentAllocationSpec`, `PaymentAllocationReversalSpec`, `RefundRecordSpec`, `RefundAllocationSpec`, `PaymentReconciliationSpec`, `FinancialDocumentReconciliationSpec`, and `PaymentDomainSpec` (the end-to-end history and the reflection shape tests). |
+| `src/test/kotlin/io/github/castab/commerce/payment/fixtures/TestPaymentModels.kt` | Test-only payment, document, and numeric-comparison helpers. |
 | `build.gradle.kts`, `settings.gradle.kts`, `gradle.properties` | Single-module build with the Java 25 toolchain and the Maven publication. |
 | `gradle/libs.versions.toml` | Version catalog. |
 | `.github/workflows/ci.yml` | CI: build and test on Java 25 for pull requests and pushes to `main`. |
@@ -162,9 +178,9 @@ Complaint  Refund  CancellationReason  bookingId  createdAt  version
 ```
 
 Add one only if a future architectural decision proves it is a lifecycle concept rather
-than adopter data. `Money` and `Invoice` now exist in the financial package. That does not
-make them booking lifecycle concepts: never reference financial types from
-`BookingLifecycle`. Booking identity in particular (how a quote and its booking are known
+than adopter data. `Money` and `Invoice` now exist in the financial package, and payments
+and refunds in the payment package. That does not make them booking lifecycle concepts:
+never reference financial or payment types from `BookingLifecycle`. Booking identity in particular (how a quote and its booking are known
 to be the same booking) is currently application-owned. See [Open questions](#open-questions).
 
 ## New lifecycle phase checklist
@@ -330,11 +346,14 @@ Entry points: Estimate.create, Quote.create, Invoice.create
 
 ## Out of scope for financial documents
 
-Never add payment or settlement concepts to any financial type: `amountPaid`, `balance`,
-`balanceDue`, `remainingBalance`, `paymentStatus`, `paymentMethod`, `paymentIntent(Id)`,
-`transactionId`, `refundAmount`, `paidAt`, `partiallyPaid`, `overdue`, payment history,
-payment processors (Stripe, Square, PayPal), or accounting ledgers. Payments are another
-bounded context that references a document by `FinancialDocumentReference`.
+A financial document does not own settlement state. Never add payment or settlement
+concepts to any financial type: `amountPaid`, `amountRefunded`, `balance`, `balanceDue`,
+`remainingBalance`, `paymentStatus`, `payments`, `refunds`, `paymentMethod`,
+`paymentIntent(Id)`, `transactionId`, `refundAmount`, `paidAt`, `partiallyPaid`,
+`overdue`, payment history, payment processors (Stripe, Square, PayPal), or accounting
+ledgers. Settlement is a separate bounded context, modeled by the
+[payment reconciliation domain](#payment-reconciliation-domain), which references a
+document by `FinancialDocumentReference`. The financial package never imports it.
 
 Also out of scope: pricing rules, tax calculation, discount engines, customer or
 counterparty models, dates and due dates, document numbering, and serialization
@@ -350,7 +369,117 @@ class Invoice(...) { var version: Version }                     // wrong: snapsh
 class Quote(val previous: Quote?)                               // wrong: embeds history recursively
 fun Estimate.toInvoice(): Invoice                               // wrong: an illegal edge
 Invoice.create(id, lineItems, total = ...)                      // wrong: totals are derived
-val balanceDue: Money                                           // wrong: payments are out of scope
+val balanceDue: Money                                           // wrong: settlement is derived in the payment domain
+```
+
+# Payment reconciliation domain
+
+These rules govern `io.github.castab.commerce.payment`. The domain records money received
+and returned, where received money was applied, and corrections to that, and derives
+reconciliation from those records. It answers "what did we receive, where was it applied,
+what was corrected, what was returned, and what is the balance?". It does not answer
+"which ledger accounts were debited?".
+
+The separation of concepts, which code, KDoc, README, and tests must all agree on:
+
+```text
+FinancialDocument           what is being charged                 (financial package)
+PaymentRecord               money received
+PaymentAllocation           received money applied to one document snapshot
+PaymentAllocationReversal   an erroneous allocation corrected     (no money moves)
+RefundRecord                money returned to the payer           (references a payment)
+RefundAllocation            which allocation a refund unwinds     (optional)
+PaymentReconciliation, FinancialDocumentReconciliation   derived, never stored
+```
+
+## Payment invariants
+
+These are non-negotiable without an explicit decision from the maintainer.
+
+1. **Records are immutable facts.** Nothing edits or deletes a record. There are no
+   mutable properties and no `copy()` on records.
+2. **Corrections are appended.** A wrong allocation is corrected by a
+   `PaymentAllocationReversal`, money returned by a `RefundRecord` (plus a
+   `RefundAllocation` when it unwinds applied value). History keeps every record.
+3. **Money movement and reconciliation are separate.** A `PaymentRecord` is the only record
+   of money arriving and a `RefundRecord` the only record of money leaving. Allocations,
+   reversals, and refund allocations move no money.
+4. **A reversal is never a refund, and a refund is never a reversal.** Never implement one
+   with the other, and never implement a refund by changing or deleting an allocation.
+   They also differ in what they leave allocatable: a reversal moves no money, so the
+   reversed amount becomes unapplied and can be allocated again. A refund reduces
+   `netReceived`, and its `RefundAllocation` only identifies which applied value the refund
+   unwound; refunded money never becomes available to allocate again. Never document or
+   implement a refund allocation as freeing value.
+5. **A payment belongs to no document.** `PaymentRecord` has no document reference,
+   allocation, balance, or refunded amount.
+6. **An allocation references an exact snapshot.** `PaymentAllocation.financialDocumentReference`
+   is the `(id, version)` the money was applied against. Its `id` alone identifies the
+   lineage. Never add a second, lineage-only document id. Allocations never roll forward
+   when a document advances.
+7. **A refund references a payment, not a document.** Its link to applied value is an
+   optional `RefundAllocation`, which must reference an allocation of the same payment.
+8. **Relationships are references.** Records hold `UUID`s and `FinancialDocumentReference`s,
+   never a `FinancialDocument`, `PaymentRecord`, `RefundRecord`, or another record.
+9. **Settlement is derived.** Gross and net allocated, refunded totals, unallocated amounts,
+   and balances exist only on the reconciliation results, recalculated from records. Never
+   store them on a record or a document. There is no stored or mutable payment status.
+10. **Amounts are strictly positive** (compared numerically, so `0.00` is rejected), in one
+    currency per payment. `Money` never converts.
+11. **Identifiers are caller-supplied `UUID`s.** The library never generates ids.
+
+## Creation, restoration, and validation
+
+- Records whose creation must agree with other records (`PaymentAllocation`,
+  `PaymentAllocationReversal`, `RefundRecord`, `RefundAllocation`) have **private**
+  constructors, a `create` that takes the real objects and checks currency, same-payment
+  links, and single-record limits, and a `restore` that takes references for persistence
+  adapters. Stored records hold only references either way. `PaymentRecord` depends on no
+  other record and has a public constructor.
+- Checks that need several records (cumulative reversals and refund allocations per
+  allocation, cumulative refunds per payment, cumulative refund allocations per refund,
+  over-allocation of a payment, allocations to a later version than the reconciled
+  snapshot, repeated ids) belong in `PaymentReconciliation` and
+  `FinancialDocumentReconciliation`, never in a single record.
+- Reconciliation validates the supplied records as a whole and does not interpret the order
+  of timestamps. Don't add chronological rules without an architectural decision.
+- Reconciliation takes collections the application supplies and loads nothing. Records of
+  other payments or documents in those collections are ignored. Don't add a repository,
+  history SPI, or lookup to this package incidentally.
+- Invalid or inconsistent input fails with `require` (`IllegalArgumentException`) and a
+  message naming the records involved.
+- `PaymentMethod` describes the instrument, never the processor. Processors appear only as
+  opaque `ExternalPaymentReference` / `ExternalRefundReference` strings. Keep the two
+  reference types separate.
+
+## Payment policy boundary
+
+The library records what happened. Never encode business, processor, or regulatory
+policy: which stages may accept money, deposit percentages, refund windows, refunds to the
+original method (`refund.method` may differ from `payment.method`), approval, or who may
+issue a refund.
+
+## Out of scope for payments
+
+Do not add, without an architectural decision: store or customer credit, gift cards,
+credit memos, chargebacks, disputes, authorization and capture, processor fees, tips,
+payouts, settlement batches, bank reconciliation, double-entry accounting (accounts,
+journals, debits, credits, posting periods), tax accounting, foreign exchange, processor
+SDKs, card data, stored cards, ACH workflows, payment links, checkout sessions, status
+polling, persistence, or serialization. A card payment converted into store credit is
+not a `RefundRecord`, because no money left the business.
+
+## Payment anti-patterns
+
+```kotlin
+class PaymentRecord(val invoiceId: UUID, ...)                   // wrong: a payment belongs to no document
+class PaymentAllocation(val payment: PaymentRecord, ...)        // wrong: reference, never embed
+class PaymentAllocation(var financialDocumentReference: ...)    // wrong: allocations never roll forward
+class PaymentAllocation(val documentId: UUID, ...)              // wrong: the reference already carries the lineage id
+require(refund.method == payment.method)                        // wrong: the refund method is a fact, not a policy
+fun reverse(a: PaymentAllocation): RefundRecord                 // wrong: a reversal is not a refund
+enum class PaymentMethod { STRIPE, PAYPAL }                     // wrong: a processor is not a method
+val PaymentRecord.status: PaymentStatus                         // wrong: status is derived by the application
 ```
 
 # Repository-wide rules
@@ -446,8 +575,14 @@ dependency just to support CI or publishing.
   the two in sync.
 - **Test-only dependencies must not leak into the published library.** Check the
   generated POM or `runtimeClasspath` after dependency changes.
-- **Routine feature work should not modify publication behavior.** Keep
-  `publishing { }` and the workflows unchanged unless the task is about them.
+- **Routine feature work must not modify publication behavior.** Leave coordinates,
+  version derivation, credentials, repositories, workflow triggers and permissions,
+  artifact composition (main, sources, and javadoc jars), and release mechanics in
+  `publishing { }` and the workflows unchanged unless the task specifically requires it.
+- **Descriptive publication metadata must stay accurate.** The POM `name` and
+  `description` are not publication behavior. When a change alters what the library
+  provides, such as adding a domain, update them in the same change so the published
+  artifact describes the library's actual functionality.
 - **Maven Central, if added later, is an additional publishing target.** Add a second
   repository or workflow step. Do not replace or break GitHub Packages for existing
   consumers, and do not add PGP signing for GitHub Packages alone.
@@ -460,6 +595,10 @@ dependency just to support CI or publishing.
   return types, and keep terminal interfaces transition-free.
 - Financial document stages are final classes of a sealed class, with private
   constructors, because the library owns their invariants.
+- Payment records are final, non-data classes with equality over every field. Where
+  creation checks other records they have private constructors with `create` and
+  `restore` factories. Reconciliation results are final classes with private constructors
+  and a static `reconcile`.
 - Prefer compile-time topology over runtime string or enum state validation.
 - Keep the public API small. Each domain should be readable in minutes. Don't add
   abstraction layers, reflection, classpath scanning, service locators, dependency
@@ -503,6 +642,16 @@ dependency just to support CI or publishing.
 - `FinancialDocumentSpec` uses reflection to assert each stage's exact public operations,
   that no stage has a callable constructor, and that snapshots hold no reference to other
   snapshots. Update these deliberately. Never loosen them to make a change pass.
+- Payment tests use real records, documents, and money; there is no collaborator worth
+  mocking. Compare derived amounts numerically (`shouldBeNumerically` in the fixtures),
+  because `Money` equality is scale-sensitive. Changes to payment semantics must come with
+  tests covering creation and rejection of every record, currency checks, exact-snapshot
+  and lineage allocation, reversals versus refunds, optional refund allocations, every
+  reconciliation rejection, and the end-to-end history in `PaymentDomainSpec`.
+- `PaymentDomainSpec` uses reflection to assert that records have no callable
+  constructor where creation checks other records, hold no mutable state, embed no
+  document or record, and that the financial types never mention the payment package.
+  Update these deliberately. Never loosen them to make a change pass.
 - Tests must run on Java 25. Never lower the test runtime to get tests passing.
 
 Run:
@@ -530,15 +679,19 @@ Any change to lifecycle topology or semantics must update, in the same change:
 Code and documentation must never disagree about legal lifecycle edges or Maven
 coordinates. In the booking lifecycle, use the term **phase**. In the financial domain,
 use **stage** (`Estimate`, `Quote`, `Invoice`) and **snapshot** (one immutable version).
+In the payment domain, use **record** for an immutable fact, **allocation** for applying
+money to a document, **reversal** for a correction, **refund** only for money that left
+the business, and **reconciliation** for derived results.
 Reserve "state" for the rejected state-property design and for the phrase "the transition
 methods are the state machine".
 
 ## Scope discipline
 
 When solving a focused issue, do not opportunistically add persistence, serialization,
-payment logic, customer models, workflow engines, generic transition contexts, event
+payment logic outside the payment package, customer models, workflow engines, generic transition contexts, event
 buses, new domains, or new modules unless the requested work requires them. Do not couple
-the booking lifecycle and the financial documents. Prefer narrow architectural evolution.
+the booking lifecycle to the other domains, and do not make the financial documents depend
+on payments. Prefer narrow architectural evolution.
 Do not split the project into `commerce-domain-persistence`, `commerce-domain-jdbi`, and
 similar modules until that work is requested.
 
@@ -569,6 +722,14 @@ These are intentionally unresolved. Do not settle them incidentally.
 - **Booking and financial coupling.** The two domains are deliberately independent.
   Whether the library should ever offer a bridge between booking phases and financial
   documents is undecided. Don't add one incidentally.
+- **Booking and payment coupling.** Payments reference financial documents, not bookings.
+  Whether the library should link payments to booking phases is undecided.
+- **Store credit.** Credit balances, gift cards, and credit memos are a possible future
+  bounded context. Don't model them as refunds or allocations in the meantime.
+- **Chronological validation.** Reconciliation validates records as a whole, ignoring
+  timestamp order, so a history in which an over-allocation was later reversed is
+  accepted. Whether to reject histories that were inconsistent at some earlier moment is
+  undecided.
 - **Financial document numbering, dates, and counterparties.** Human-facing document
   numbers, issue and due dates, and customer references are application data today.
 - **A shared `Active.cancel()`.** All active phases can be cancelled, but `cancel()` is

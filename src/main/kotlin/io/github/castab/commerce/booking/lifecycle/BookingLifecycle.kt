@@ -196,8 +196,8 @@ public sealed interface BookingLifecycle {
      *
      * A terminal lifecycle does not mean that all business activity associated with the
      * booking has ended. Refunds, complaints, disputes, chargebacks, and credits are
-     * orthogonal application-owned processes. They do not reopen or rewrite the booking
-     * lifecycle.
+     * orthogonal processes outside the booking lifecycle. They do not reopen or rewrite the
+     * booking lifecycle.
      */
     public sealed interface Terminal : BookingLifecycle {
 

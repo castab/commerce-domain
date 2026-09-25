@@ -34,6 +34,18 @@ public data class Money(
         return Money(amount.add(other.amount), currency)
     }
 
+    /**
+     * The exact difference of this amount and [other]. The result may be negative.
+     *
+     * @throws IllegalArgumentException if [other] is in a different currency.
+     */
+    public operator fun minus(other: Money): Money {
+        require(other.currency == currency) {
+            "Cannot subtract ${other.currency.currencyCode} from ${currency.currencyCode}: currencies must match"
+        }
+        return Money(amount.subtract(other.amount), currency)
+    }
+
     /** The exact product of this amount and [multiplier], in the same currency. */
     public operator fun times(multiplier: BigDecimal): Money = Money(amount.multiply(multiplier), currency)
 

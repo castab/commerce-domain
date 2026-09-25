@@ -13,26 +13,32 @@ multiple applications can share.
 io.github.castab:commerce-domain:<version>
 ```
 
-It currently contains two independent domains:
+It currently contains three domains:
 
 | Domain | Package | What it provides |
 |---|---|---|
 | [Booking lifecycle](#booking-lifecycle) | `io.github.castab.commerce.booking.lifecycle` | A type-level protocol for the phases of a booking (`InitialRequest → Quote → Booked → Completed`, or `Cancelled`). Your application's own types implement the phases. |
 | [Financial documents](#financial-documents) | `io.github.castab.commerce.financial` | Immutable, versioned commercial documents (`Estimate → Quote → Invoice`) with line items, change orders, derived totals, and persistence-agnostic history lookup. |
+| [Payment reconciliation](#payment-reconciliation) | `io.github.castab.commerce.payment` | Immutable payment records, payment allocations, allocation reversals, refund records, and refund allocations, with derived payment and document reconciliation. |
 
-Neither domain depends on the other. An application can use one, the other, or
-[both together](#using-both-domains-together).
+The booking lifecycle and the financial documents are independent: neither depends on the
+other, and an application can use one, the other, or
+[both together](#using-both-domains-together). The payment domain references financial
+documents, one way only. A financial document never knows about its payments.
 
-The two domains share one design stance. Lifecycle progression is expressed by the type
+The domains share one design stance. Lifecycle progression is expressed by the type
 system rather than a mutable status field: an operation that is not legal in a stage or
-phase does not exist on that type. The library stays free of persistence, frameworks,
-serialization, and payment concerns. Its only runtime dependency is `kotlin-stdlib`.
+phase does not exist on that type. Facts are immutable, and anything derivable (totals,
+balances) is derived rather than stored. The library stays free of persistence,
+frameworks, serialization, and payment-processor integrations. Its only runtime dependency
+is `kotlin-stdlib`.
 
 ## Contents
 
 - [Installation](#installation)
 - [Booking lifecycle](#booking-lifecycle)
 - [Financial documents](#financial-documents)
+- [Payment reconciliation](#payment-reconciliation)
 - [Using both domains together](#using-both-domains-together)
 - [What this library is not](#what-this-library-is-not)
 - [Requirements](#requirements)
@@ -631,8 +637,9 @@ Every example type above (`MenuSelection`, `CateringQuote`, `bookingId`, `invoic
 
 An application that wants versioned, immutable quote and invoice documents can hold
 [financial documents](#financial-documents) inside its phase models. See
-[Using both domains together](#using-both-domains-together). The booking lifecycle itself
-stays independent of them.
+[Using both domains together](#using-both-domains-together). Payments and refunds against
+those documents can be recorded with the [payment domain](#payment-reconciliation). The
+booking lifecycle itself stays independent of both.
 
 ### Quote and invoice revisions
 
@@ -682,7 +689,10 @@ The lifecycle is still `Completed`, because the service was fulfilled. Likewise,
 `Booked → Cancelled` may be followed by a refund, and the lifecycle is still `Cancelled`,
 because fulfillment never happened.
 
-Model such activity as separate, application-owned processes that refer to the booking:
+Model such activity as separate processes that refer to the booking, outside the booking
+lifecycle. Money actually returned can be recorded with the
+[payment domain](#payment-reconciliation), which references financial documents rather
+than bookings; the application links the two. A minimal application-owned sketch:
 
 ```kotlin
 data class Refund(val bookingId: UUID, val amount: BigDecimal, val reason: String)
@@ -694,7 +704,7 @@ val refund = Refund(completed.bookingId, BigDecimal("150.00"), reason = "late de
 Those processes can have lifecycles of their own. The combinations below describe
 different historical situations, even though money is returned in both:
 
-| Booking lifecycle | Payment process (application-owned) | What happened |
+| Booking lifecycle | Payment process (outside the booking lifecycle) | What happened |
 |---|---|---|
 | `Completed` | refunded | The service was delivered, then money was returned. |
 | `Cancelled` | refunded | The service never happened, and money was returned. |
@@ -846,8 +856,9 @@ data class Money(val amount: BigDecimal, val currency: Currency)
   line, calculated by your application. It is not a rate and not a taxable amount.
   `total = subtotal + taxAmount`.
 - **Currency.** `Money` is a `BigDecimal` plus a `java.util.Currency`. Arithmetic is exact,
-  with no rounding and no conversion. Adding USD to EUR throws. A line item's `price` and
-  `taxAmount` must share a currency, and all line items in a document must share one.
+  with no rounding and no conversion. Adding or subtracting USD and EUR throws. A line
+  item's `price` and `taxAmount` must share a currency, and all line items in a document
+  must share one.
 - **Totals are derived.** A document's `subtotal`, `taxAmount`, and `total` are always
   calculated from its line items. No API accepts them, so a document can't claim a total
   that its lines don't add up to.
@@ -1105,14 +1116,16 @@ stored is the persistence layer's job, normally with a uniqueness constraint or 
 optimistic-concurrency check on `(document_id, version)`. The writer that loses should
 reload the latest version and reapply its change order.
 
-### Payments are out of scope
+### Settlement is outside the document
 
 An invoice describes the commercial document and how it evolved. It does **not** describe
-settlement. There is no `amountPaid`, `balance`, `balanceDue`, `paymentStatus`,
-`paymentMethod`, payment intent or transaction id, `refundAmount`, `paidAt`, overdue flag,
-or payment history, and there are no payment-processor integrations. Payments are a
-separate bounded context. Model them in your application and have them refer to an
-invoice by its `FinancialDocumentReference`.
+settlement. There is no `amountPaid`, `amountRefunded`, `balance`, `balanceDue`,
+`paymentStatus`, `payments`, or `refunds` on any financial document, and there never will
+be. Settlement is a separate bounded context that references documents by their
+`FinancialDocumentReference`. This library models it in the
+[payment reconciliation](#payment-reconciliation) domain, where balances are derived from
+immutable payment records rather than stored. Your application still owns persistence,
+processor integration, and payment policy.
 
 ### Financial API
 
@@ -1172,6 +1185,7 @@ public data class FinancialDocumentReference(val id: UUID, val version: Version)
 
 public data class Money(val amount: BigDecimal, val currency: Currency) {
     public operator fun plus(other: Money): Money
+    public operator fun minus(other: Money): Money
     public operator fun times(multiplier: BigDecimal): Money
     public companion object { public fun zero(currency: Currency): Money }
 }
@@ -1211,6 +1225,468 @@ public fun FinancialDocument.retrieveLatestVersion(from: FinancialDocumentHistor
 From Java, the factories are static (`FinancialDocument.Quote.create(id, items)`,
 `Version.of(3)`, `Version.INITIAL`), and the history helpers are static methods on
 `FinancialDocumentHistories`.
+
+## Payment reconciliation
+
+Package `io.github.castab.commerce.payment`. Immutable records of money received, where it
+was applied, how mistakes were corrected, and what was returned, plus reconciliation
+derived from those records.
+
+A financial document describes what is charged. Everything about settlement lives here, in
+separate records that reference documents:
+
+| Type | Records |
+|---|---|
+| `PaymentRecord` | Money received: an amount, a method, a time, and an optional processor reference. |
+| `PaymentAllocation` | How much of a payment was applied to a financial document, at one exact snapshot. |
+| `PaymentAllocationReversal` | A correction: some or all of an allocation was recorded in error. No money moves. |
+| `RefundRecord` | Money actually returned to the payer, out of a payment. |
+| `RefundAllocation` | Which allocation's applied value a refund unwinds. |
+| `PaymentReconciliation` | Derived: what became of one payment's money. |
+| `FinancialDocumentReconciliation` | Derived: how much is applied to a document lineage and what remains owed. |
+
+The dependency is one-directional: `payment` references `financial`, and `financial` never
+references `payment`. A `FinancialDocument` has no `amountPaid`, `balance`,
+`paymentStatus`, `payments`, or `refunds`, and never will. The booking lifecycle depends on
+neither.
+
+### Records reference, never embed
+
+Every record is immutable, and every relationship is a reference (a `UUID`, or a
+`FinancialDocumentReference` for documents). No record holds another record or a document,
+so each one maps onto one row or document in your store, and loading one never loads a
+graph.
+
+```text
+FinancialDocument D/v3
+       ↑
+       │  financialDocumentReference = (D, v3)
+       │
+PaymentAllocation A1
+       ↑
+       │  paymentReference = P1
+       │
+Payment P1
+```
+
+A payment belongs to no document. It may be unapplied, partially applied, applied to one
+document, or split across several:
+
+```text
+Payment P1
+ ├── Allocation A1 → D1/v2
+ └── Allocation A2 → D2/v4
+```
+
+### Exact snapshot and enduring lineage
+
+A `PaymentAllocation` references a document with the existing
+`FinancialDocumentReference(id, version)`, which carries both meanings you need without a
+second identifier:
+
+| Question | Comparison | Meaning |
+|---|---|---|
+| Which allocations were made against this exact snapshot? | `allocation.financialDocumentReference == FinancialDocumentReference(d, Version.of(2))` | What the commercial obligation looked like when the money was applied. |
+| Which allocations belong to this document? | `allocation.financialDocumentReference.id == d` | The enduring commercial obligation, across every version. |
+
+An allocation **stays attached to the snapshot where it occurred**. It never rolls forward
+when the document advances:
+
+```text
+D/v1 Estimate
+    ↓
+D/v2 Quote       ← $300 deposit allocated here, and it stays here
+    ↓
+D/v3 Quote
+    ↓
+D/v4 Invoice     ← reconciled: the deposit counts, because it shares id D
+```
+
+Rewriting the deposit to `D/v4` would falsify history. Instead, lineage reconciliation of
+the current snapshot finds every allocation whose reference shares the document's `id`.
+
+### Corrections are appended, never edited
+
+Nothing is ever edited or deleted. A mistake is corrected by adding a record:
+
+```text
+Payment P1                 $500
+Allocation A1              $500 → Document X/v3
+                                   (mistake discovered)
+AllocationReversal R1      $500 → reverses A1
+Allocation A2              $500 → Document Y/v2
+```
+
+The history still shows A1, R1, and A2. Partial reversals work the same way: reversing
+$200 of a $500 allocation leaves $300 of it applied and makes $200 of the payment
+available to allocate again.
+
+### Allocation reversal versus refund
+
+These are different facts and are never interchangeable:
+
+```text
+Allocation reversal
+    = correct bookkeeping
+    corrects where money was recorded as applied
+    no money moves
+    the reversed amount becomes unapplied and can be allocated again
+
+Refund
+    = money leaves the business
+    returned to the payer
+
+Refund allocation
+    = identifies which applied value a refund unwound
+    does not make any value available to allocate again
+```
+
+Never record a correction as a fake refund, and never record a refund by editing or
+deleting an allocation.
+
+A `RefundRecord` references the **payment** whose money it returns, not a document: a
+refund gives back money that a payment brought in. When the refunded money had been
+applied to a document, a `RefundAllocation` records which allocation it unwinds, which
+completes the audit path:
+
+```text
+FinancialDocument D/v4
+        ↑
+PaymentAllocation A1      $500 → D/v4
+        ↑
+Payment P1                $500
+        ↑
+Refund R1                 $100 of P1
+        ↓
+RefundAllocation RA1      $100 of R1 unwinds A1
+```
+
+A refund allocation does **not** make value available to allocate again. The refund
+reduces what the payment kept (`netReceived`), and the refund allocation reduces what is
+applied (`netAllocated`) by the same amount, so `unallocated` is unchanged:
+
+```text
+                    Reversal $100        Refund $100 + RefundAllocation $100
+Payment             $500                 $500
+Allocated           $500                 $500
+netReceived         $500                 $400
+netAllocated        $400                 $400
+unallocated         $100  ← reusable     $0    ← the $100 left the business
+```
+
+A refund allocation is **optional**. Money refunded from a payment's unapplied portion was
+never applied to any document, so there is nothing to unwind:
+
+```text
+Payment       $500
+Allocated     $300
+Unapplied     $200
+Refund        $100   ← from unapplied money: no RefundAllocation
+```
+
+A refund's `method` is how the money actually left, which need not be how it arrived. A
+check payment refunded in cash and a debit payment refunded in cash are both recordable.
+Whether your business or processor permits a combination is your policy; the library only
+records what happened.
+
+`PaymentMethod` (`CASH`, `CHECK`, `CARD`, `BANK_TRANSFER`, `DIGITAL_WALLET`, `OTHER`) names
+the instrument, not the processor. The processor goes in an optional
+`ExternalPaymentReference(provider, reference)` or `ExternalRefundReference(provider,
+reference)`, such as `CARD` with `("stripe", "pi_123")` or `DIGITAL_WALLET` with
+`("paypal", ...)`. The two reference types are distinct so that a payment's transaction id
+cannot be recorded as a refund's. The library never interprets them and depends on no
+processor SDK.
+
+### Derived reconciliation
+
+Balances are never stored. They are derived from the records every time, so they cannot
+disagree with them:
+
+```text
+PaymentReconciliation
+    netReceived   = paymentAmount - totalRefunded
+    netAllocated  = grossAllocated - allocationReversals - refundAllocations
+    unallocated   = netReceived - netAllocated
+
+FinancialDocumentReconciliation
+    netApplied    = grossAllocated - allocationReversals - refundAllocations
+    balance       = documentTotal - netApplied
+```
+
+| Scenario | Net allocated | Net received | Unallocated |
+|---|---|---|---|
+| $500 payment, $500 allocated, $100 refunded with a $100 refund allocation | $400 | $400 | $0 |
+| $500 payment, $300 allocated, $100 refunded from unapplied money | $300 | $400 | $100 |
+| $500 payment, $500 allocated, $200 of the allocation reversed | $300 | $500 | $200 |
+
+Document reconciliation aggregates across versions by document `id` and uses the total of
+the snapshot you pass, normally the latest. With a $300 allocation to `D/v2` and a current
+`D/v5` total of $1,250, the balance is $950. A negative balance means more is applied than
+the document currently totals. There is no payment status: derive `UNPAID`,
+`PARTIALLY_PAID`, `PAID`, or `OVERPAID` from these amounts if you need one.
+
+The application supplies the records; nothing is loaded. The collections you pass may
+contain records of other payments or documents, which are ignored. `reconcile` rejects an
+inconsistent history with an `IllegalArgumentException` instead of deriving nonsense:
+
+- a record in another currency than its payment, document, allocation, or refund;
+- allocations and refunds of a payment that together exceed it (a reversal makes its
+  amount unapplied and allocatable again; a refund allocation does not, because the
+  refunded money has left);
+- reversals of an allocation that together exceed it, or reversals and refund allocations
+  that together reduce it below zero;
+- refunds of a payment that together exceed it;
+- refund allocations that link a refund and an allocation of different payments, or refer
+  to one that was not supplied, or that together exceed their refund;
+- an allocation to a later version than the snapshot being reconciled;
+- a record supplied twice.
+
+Validation looks at the supplied records as a whole and does not interpret the order of
+their timestamps.
+
+### Creation and restoration
+
+Where a record must agree with other records, it is created from the real objects and
+stores only their references, as `FinancialDocument` does with its snapshots:
+
+| Record | `create(...)` takes | `create` checks | `restore(...)` takes |
+|---|---|---|---|
+| `PaymentAllocation` | `payment`, `financialDocument` | currency matches both; amount ≤ payment | `paymentReference`, `financialDocumentReference` |
+| `PaymentAllocationReversal` | `allocation` | currency; amount ≤ allocation | `paymentAllocationReference` |
+| `RefundRecord` | `payment` | currency; amount ≤ payment | `paymentReference` |
+| `RefundAllocation` | `refund`, `allocation` | same payment; currency; amount ≤ refund and ≤ allocation | `refundReference`, `paymentAllocationReference` |
+
+`restore` is for persistence adapters rebuilding stored records. Checks that need more than
+one record (cumulative reversals, cumulative refunds, over-allocation) happen in
+reconciliation, because a single record cannot see the others. `PaymentRecord` depends on
+no other record and has a public constructor. Every amount must be strictly positive,
+compared numerically (`0.00` is rejected). Every `id` is a `UUID` your application
+supplies; the library never generates one.
+
+The library does not restrict which stages accept money. Whether an estimate may take a
+deposit, or only invoices take payment, is your policy.
+
+### Example: deposit, later invoice version, partial refund
+
+```kotlin
+import io.github.castab.commerce.financial.ChangeOrder
+import io.github.castab.commerce.financial.FinancialDocument
+import io.github.castab.commerce.financial.LineItem
+import io.github.castab.commerce.payment.ExternalPaymentReference
+import io.github.castab.commerce.payment.FinancialDocumentReconciliation
+import io.github.castab.commerce.payment.PaymentAllocation
+import io.github.castab.commerce.payment.PaymentMethod
+import io.github.castab.commerce.payment.PaymentReconciliation
+import io.github.castab.commerce.payment.PaymentRecord
+import io.github.castab.commerce.payment.RefundAllocation
+import io.github.castab.commerce.payment.RefundRecord
+import java.time.Instant
+import java.util.UUID
+
+val catering = LineItem(UUID.randomUUID(), "Catering", quantity = null, price = usd("1000.00"), taxAmount = usd("0.00"))
+val rentals = LineItem(UUID.randomUUID(), "Table rentals", quantity = null, price = usd("200.00"), taxAmount = usd("0.00"))
+
+// D/v1: a $1,000 quote.
+val quoteV1 = FinancialDocument.Quote.create(id = UUID.randomUUID(), lineItems = listOf(catering))
+
+// A $300 card deposit arrives through Stripe and is applied to the quote as it stands.
+val deposit = PaymentRecord(
+    id = UUID.randomUUID(),
+    amount = usd("300.00"),
+    method = PaymentMethod.CARD,
+    receivedAt = Instant.parse("2026-05-01T17:00:00Z"),
+    externalReference = ExternalPaymentReference(provider = "stripe", reference = "pi_3Nabc"),
+)
+val depositAllocation = PaymentAllocation.create(
+    id = UUID.randomUUID(),
+    payment = deposit,
+    financialDocument = quoteV1,
+    amount = usd("300.00"),
+    allocatedAt = Instant.parse("2026-05-01T17:01:00Z"),
+)
+
+// The quote grows to $1,200 (D/v2) and is invoiced (D/v3).
+val quoteV2 = quoteV1.changeOrder(ChangeOrder(listOf(ChangeOrder.Change.AddLineItem(rentals))))
+val invoiceV3 = quoteV2.toInvoice()
+
+FinancialDocumentReconciliation.reconcile(invoiceV3, allocations = listOf(depositAllocation))
+    .balance                                     // 900.00 USD
+depositAllocation.financialDocumentReference     // still (D, v1)
+
+// $100 of the deposit is returned in cash, unwinding part of the deposit allocation.
+val refund = RefundRecord.create(
+    id = UUID.randomUUID(),
+    payment = deposit,
+    amount = usd("100.00"),
+    method = PaymentMethod.CASH,                 // may differ from the payment's method
+    refundedAt = Instant.parse("2026-05-20T12:00:00Z"),
+)
+val unwound = RefundAllocation.create(
+    id = UUID.randomUUID(),
+    refund = refund,
+    allocation = depositAllocation,
+    amount = usd("100.00"),
+    allocatedAt = Instant.parse("2026-05-20T12:00:00Z"),
+)
+
+val invoice = FinancialDocumentReconciliation.reconcile(
+    document = invoiceV3,
+    allocations = listOf(depositAllocation),
+    refundAllocations = listOf(unwound),
+)
+invoice.grossAllocated                           // 300.00 USD
+invoice.refundAllocations                        // 100.00 USD
+invoice.netApplied                               // 200.00 USD
+invoice.balance                                  // 1000.00 USD
+
+val payment = PaymentReconciliation.reconcile(
+    payment = deposit,
+    allocations = listOf(depositAllocation),
+    refunds = listOf(refund),
+    refundAllocations = listOf(unwound),
+)
+payment.netReceived                              // 200.00 USD
+payment.netAllocated                             // 200.00 USD
+payment.unallocated                              // 0.00 USD
+```
+
+Every record from that history still exists, unchanged: the deposit, its allocation to
+`D/v1`, the refund, and the refund allocation, alongside `D/v1`, `D/v2`, and `D/v3`.
+
+### Persistence and scope
+
+Persistence stays in your application. A relational store would naturally hold one table
+per record type (`payments`, `payment_allocations`, `payment_allocation_reversals`,
+`refunds`, `refund_allocations`), with references as foreign keys and uniqueness of
+external references enforced there if you want it. The library ships no schema,
+repository, entity, or adapter.
+
+The payment domain records and reconciles actual payment and refund facts. It is not an
+accounting ledger: there are no accounts, journals, debits, credits, or posting periods.
+It also does not model store or customer credit, gift cards, credit memos, chargebacks,
+disputes, authorization and capture, processor fees, tips, payouts, settlement batches,
+bank reconciliation, currency conversion, card data, or checkout. Business policy (who may
+pay what, refund windows, refund-to-original-method rules, deposit percentages) stays in
+your application.
+
+### Payment API
+
+The complete public API of `io.github.castab.commerce.payment`, without KDoc and bodies:
+
+```kotlin
+public enum class PaymentMethod { CASH, CHECK, CARD, BANK_TRANSFER, DIGITAL_WALLET, OTHER }
+
+public data class ExternalPaymentReference(val provider: String, val reference: String)
+public data class ExternalRefundReference(val provider: String, val reference: String)
+
+public class PaymentRecord(
+    public val id: UUID,
+    public val amount: Money,
+    public val method: PaymentMethod,
+    public val receivedAt: Instant,
+    public val externalReference: ExternalPaymentReference? = null,
+) {
+    public val currency: Currency
+}
+
+public class PaymentAllocation {
+    public val id: UUID
+    public val paymentReference: UUID
+    public val financialDocumentReference: FinancialDocumentReference
+    public val amount: Money
+    public val allocatedAt: Instant
+    public val currency: Currency
+    public companion object {
+        public fun create(id: UUID, payment: PaymentRecord, financialDocument: FinancialDocument, amount: Money, allocatedAt: Instant): PaymentAllocation
+        public fun restore(id: UUID, paymentReference: UUID, financialDocumentReference: FinancialDocumentReference, amount: Money, allocatedAt: Instant): PaymentAllocation
+    }
+}
+
+public class PaymentAllocationReversal {
+    public val id: UUID
+    public val paymentAllocationReference: UUID
+    public val amount: Money
+    public val reversedAt: Instant
+    public val reason: String?
+    public val currency: Currency
+    public companion object {
+        public fun create(id: UUID, allocation: PaymentAllocation, amount: Money, reversedAt: Instant, reason: String? = null): PaymentAllocationReversal
+        public fun restore(id: UUID, paymentAllocationReference: UUID, amount: Money, reversedAt: Instant, reason: String? = null): PaymentAllocationReversal
+    }
+}
+
+public class RefundRecord {
+    public val id: UUID
+    public val paymentReference: UUID
+    public val amount: Money
+    public val method: PaymentMethod
+    public val refundedAt: Instant
+    public val externalReference: ExternalRefundReference?
+    public val currency: Currency
+    public companion object {
+        public fun create(id: UUID, payment: PaymentRecord, amount: Money, method: PaymentMethod, refundedAt: Instant, externalReference: ExternalRefundReference? = null): RefundRecord
+        public fun restore(id: UUID, paymentReference: UUID, amount: Money, method: PaymentMethod, refundedAt: Instant, externalReference: ExternalRefundReference? = null): RefundRecord
+    }
+}
+
+public class RefundAllocation {
+    public val id: UUID
+    public val refundReference: UUID
+    public val paymentAllocationReference: UUID
+    public val amount: Money
+    public val allocatedAt: Instant
+    public val currency: Currency
+    public companion object {
+        public fun create(id: UUID, refund: RefundRecord, allocation: PaymentAllocation, amount: Money, allocatedAt: Instant): RefundAllocation
+        public fun restore(id: UUID, refundReference: UUID, paymentAllocationReference: UUID, amount: Money, allocatedAt: Instant): RefundAllocation
+    }
+}
+
+public class PaymentReconciliation {
+    public val paymentReference: UUID
+    public val paymentAmount: Money
+    public val totalRefunded: Money
+    public val netReceived: Money
+    public val grossAllocated: Money
+    public val allocationReversals: Money
+    public val refundAllocations: Money
+    public val netAllocated: Money
+    public val unallocated: Money
+    public val currency: Currency
+    public companion object {
+        public fun reconcile(
+            payment: PaymentRecord,
+            allocations: Collection<PaymentAllocation>,
+            allocationReversals: Collection<PaymentAllocationReversal> = emptyList(),
+            refunds: Collection<RefundRecord> = emptyList(),
+            refundAllocations: Collection<RefundAllocation> = emptyList(),
+        ): PaymentReconciliation
+    }
+}
+
+public class FinancialDocumentReconciliation {
+    public val documentReference: FinancialDocumentReference
+    public val documentTotal: Money
+    public val grossAllocated: Money
+    public val allocationReversals: Money
+    public val refundAllocations: Money
+    public val netApplied: Money
+    public val balance: Money
+    public val currency: Currency
+    public companion object {
+        public fun reconcile(
+            document: FinancialDocument,
+            allocations: Collection<PaymentAllocation>,
+            allocationReversals: Collection<PaymentAllocationReversal> = emptyList(),
+            refundAllocations: Collection<RefundAllocation> = emptyList(),
+        ): FinancialDocumentReconciliation
+    }
+}
+```
+
+The records are regular classes, not data classes: there is no `copy()` to invite editing
+a historical fact. From Java, `create`, `restore`, and `reconcile` are static methods, with
+overloads for the optional parameters.
 
 ## Using both domains together
 
@@ -1263,7 +1739,8 @@ It is not:
 - a workflow engine or a runtime policy engine;
 - a universal booking aggregate or booking data model;
 - a pricing, tax-calculation, or quote engine (your application prices lines and computes tax);
-- a payment, balance, or accounting library;
+- a payment processor integration, a checkout, or a card-data store;
+- an accounting ledger (no accounts, journals, debits, or credits);
 - a serialization format or a framework integration;
 - a state enum wrapper.
 
@@ -1340,13 +1817,18 @@ What exists today:
   and `Invoice`, plus `Version`, `Money`, `LineItem`, `ChangeOrder`,
   `FinancialDocumentReference`, and the `FinancialDocumentHistory` SPI with its lookup
   helpers;
+- the payment reconciliation domain: `PaymentRecord`, `PaymentAllocation`,
+  `PaymentAllocationReversal`, `RefundRecord`, `RefundAllocation`, `PaymentMethod`, the
+  external reference types, and the derived `PaymentReconciliation` and
+  `FinancialDocumentReconciliation`;
 - KDoc on every public declaration;
-- Kotest suites for both domains, using real fixtures and value objects, with MockK for
+- Kotest suites for every domain, using real fixtures and value objects, with MockK for
   mockable collaborators;
 - GitHub Actions CI on Java 25, and release publishing to GitHub Packages.
 
 What does not exist: persistence implementations, serialization, events, framework
-integrations, payments, Maven Central publishing.
+integrations, payment-processor integrations, store credit, accounting ledgers, Maven
+Central publishing.
 
 ## Future direction
 
