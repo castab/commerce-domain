@@ -1,4 +1,4 @@
-package io.github.castab.bookinglifecycle
+package io.github.castab.commerce.booking.lifecycle
 
 /**
  * The type-level booking lifecycle protocol.

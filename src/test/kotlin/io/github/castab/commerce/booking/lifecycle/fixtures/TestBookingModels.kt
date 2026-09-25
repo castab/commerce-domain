@@ -1,6 +1,6 @@
-package io.github.castab.bookinglifecycle.fixtures
+package io.github.castab.commerce.booking.lifecycle.fixtures
 
-import io.github.castab.bookinglifecycle.BookingLifecycle
+import io.github.castab.commerce.booking.lifecycle.BookingLifecycle
 
 /*
  * Test-only "application-owned" domain models.

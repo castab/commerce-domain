@@ -16,4 +16,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "booking-lifecycle"
+// The project name is the published Maven artifactId: io.github.castab:commerce-domain.
+// It is independent of the GitHub repository name and of the checkout directory name.
+rootProject.name = "commerce-domain"
