@@ -110,6 +110,47 @@ class PaymentReconciliationSpec : FunSpec({
             reconciliation.unallocated shouldBeNumerically usd("0")
         }
 
+        test("a reversal makes value allocatable again; a refund with a refund allocation does not") {
+            // From the same fully allocated $500 payment, $100 is either reversed or refunded.
+            val payment = payment(usd("500.00"))
+            val allocation = PaymentAllocation.create(UUID.randomUUID(), payment, documentX, usd("500.00"), minutesLater(1))
+            val before = PaymentReconciliation.reconcile(payment, listOf(allocation))
+            before.unallocated shouldBeNumerically usd("0")
+
+            val reversal = PaymentAllocationReversal.create(UUID.randomUUID(), allocation, usd("100.00"), minutesLater(2))
+            val reversed = PaymentReconciliation.reconcile(payment, listOf(allocation), listOf(reversal))
+
+            reversed.netReceived shouldBeNumerically usd("500.00")
+            reversed.netAllocated shouldBeNumerically usd("400.00")
+            reversed.unallocated shouldBeNumerically usd("100.00")
+
+            val refund = RefundRecord.create(UUID.randomUUID(), payment, usd("100.00"), PaymentMethod.CARD, minutesLater(2))
+            val unwound = RefundAllocation.create(UUID.randomUUID(), refund, allocation, usd("100.00"), minutesLater(2))
+            val refunded = PaymentReconciliation.reconcile(
+                payment,
+                listOf(allocation),
+                refunds = listOf(refund),
+                refundAllocations = listOf(unwound),
+            )
+
+            refunded.netReceived shouldBeNumerically usd("400.00")
+            refunded.netAllocated shouldBeNumerically usd("400.00")
+            refunded.unallocated shouldBeNumerically before.unallocated
+
+            // The refunded $100 cannot be allocated again, while the reversed $100 can.
+            val reallocation = PaymentAllocation.create(UUID.randomUUID(), payment, documentY, usd("100.00"), minutesLater(3))
+            PaymentReconciliation.reconcile(payment, listOf(allocation, reallocation), listOf(reversal))
+                .unallocated shouldBeNumerically usd("0")
+            shouldThrow<IllegalArgumentException> {
+                PaymentReconciliation.reconcile(
+                    payment,
+                    listOf(allocation, reallocation),
+                    refunds = listOf(refund),
+                    refundAllocations = listOf(unwound),
+                )
+            }.message shouldContain "is over-applied"
+        }
+
         test("a refund of allocated money without a refund allocation is rejected as over-applied") {
             val payment = payment(usd("500.00"))
             val allocation = PaymentAllocation.create(UUID.randomUUID(), payment, documentX, usd("500.00"), minutesLater(1))

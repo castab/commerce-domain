@@ -76,8 +76,9 @@ publishing {
             pom {
                 name = "commerce-domain"
                 description = "Immutable, persistence-agnostic commerce domain models and " +
-                    "lifecycle APIs for Kotlin/JVM: a type-level booking lifecycle protocol " +
-                    "and versioned financial documents (estimates, quotes, and invoices)."
+                    "lifecycle APIs for Kotlin/JVM: a type-level booking lifecycle protocol, " +
+                    "versioned financial documents (estimates, quotes, and invoices), and " +
+                    "payment reconciliation (payments, allocations, reversals, and refunds)."
                 url = "https://github.com/$githubRepository"
                 developers {
                     developer {

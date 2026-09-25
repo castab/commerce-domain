@@ -1330,10 +1330,15 @@ Allocation reversal
     = correct bookkeeping
     corrects where money was recorded as applied
     no money moves
+    the reversed amount becomes unapplied and can be allocated again
 
 Refund
     = money leaves the business
     returned to the payer
+
+Refund allocation
+    = identifies which applied value a refund unwound
+    does not make any value available to allocate again
 ```
 
 Never record a correction as a fake refund, and never record a refund by editing or
@@ -1354,6 +1359,19 @@ Payment P1                $500
 Refund R1                 $100 of P1
         ↓
 RefundAllocation RA1      $100 of R1 unwinds A1
+```
+
+A refund allocation does **not** make value available to allocate again. The refund
+reduces what the payment kept (`netReceived`), and the refund allocation reduces what is
+applied (`netAllocated`) by the same amount, so `unallocated` is unchanged:
+
+```text
+                    Reversal $100        Refund $100 + RefundAllocation $100
+Payment             $500                 $500
+Allocated           $500                 $500
+netReceived         $500                 $400
+netAllocated        $400                 $400
+unallocated         $100  ← reusable     $0    ← the $100 left the business
 ```
 
 A refund allocation is **optional**. Money refunded from a payment's unapplied portion was
@@ -1412,8 +1430,9 @@ contain records of other payments or documents, which are ignored. `reconcile` r
 inconsistent history with an `IllegalArgumentException` instead of deriving nonsense:
 
 - a record in another currency than its payment, document, allocation, or refund;
-- allocations and refunds of a payment that together exceed it (a reversal or refund
-  allocation frees value that can be allocated again);
+- allocations and refunds of a payment that together exceed it (a reversal makes its
+  amount unapplied and allocatable again; a refund allocation does not, because the
+  refunded money has left);
 - reversals of an allocation that together exceed it, or reversals and refund allocations
   that together reduce it below zero;
 - refunds of a payment that together exceed it;

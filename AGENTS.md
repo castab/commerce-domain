@@ -406,6 +406,11 @@ These are non-negotiable without an explicit decision from the maintainer.
    reversals, and refund allocations move no money.
 4. **A reversal is never a refund, and a refund is never a reversal.** Never implement one
    with the other, and never implement a refund by changing or deleting an allocation.
+   They also differ in what they leave allocatable: a reversal moves no money, so the
+   reversed amount becomes unapplied and can be allocated again. A refund reduces
+   `netReceived`, and its `RefundAllocation` only identifies which applied value the refund
+   unwound; refunded money never becomes available to allocate again. Never document or
+   implement a refund allocation as freeing value.
 5. **A payment belongs to no document.** `PaymentRecord` has no document reference,
    allocation, balance, or refunded amount.
 6. **An allocation references an exact snapshot.** `PaymentAllocation.financialDocumentReference`
@@ -570,8 +575,14 @@ dependency just to support CI or publishing.
   the two in sync.
 - **Test-only dependencies must not leak into the published library.** Check the
   generated POM or `runtimeClasspath` after dependency changes.
-- **Routine feature work should not modify publication behavior.** Keep
-  `publishing { }` and the workflows unchanged unless the task is about them.
+- **Routine feature work must not modify publication behavior.** Leave coordinates,
+  version derivation, credentials, repositories, workflow triggers and permissions,
+  artifact composition (main, sources, and javadoc jars), and release mechanics in
+  `publishing { }` and the workflows unchanged unless the task specifically requires it.
+- **Descriptive publication metadata must stay accurate.** The POM `name` and
+  `description` are not publication behavior. When a change alters what the library
+  provides, such as adding a domain, update them in the same change so the published
+  artifact describes the library's actual functionality.
 - **Maven Central, if added later, is an additional publishing target.** Add a second
   repository or workflow step. Do not replace or break GitHub Packages for existing
   consumers, and do not add PGP signing for GitHub Packages alone.

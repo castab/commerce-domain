@@ -17,7 +17,18 @@ import java.util.UUID
  * For example, a $500 payment with $300 allocated and $100 refunded from its unapplied money
  * has `netReceived` $400, `netAllocated` $300, and `unallocated` $100. Had the $100 instead
  * been refunded out of the allocation (with a [RefundAllocation]), `netAllocated` would be
- * $200 and `unallocated` would still be $200.
+ * $200 and `unallocated` would be $200: only the $200 that was never applied. The refunded
+ * $100 is gone from both.
+ *
+ * ## Reversals and refunds affect unallocated value differently
+ *
+ * - A [PaymentAllocationReversal] reduces `netAllocated` without moving money, so
+ *   `netReceived` is unchanged and `unallocated` grows by the reversed amount. That value
+ *   is still the payment's and can be allocated elsewhere.
+ * - A [RefundRecord] reduces `netReceived`: that money has left the business. A
+ *   [RefundAllocation] records which applied value the refund unwound, reducing
+ *   `netAllocated` by the same amount, so `unallocated` does not grow. Refunded money never
+ *   becomes available to allocate again.
  *
  * ## Derived, never stored
  *
@@ -111,8 +122,9 @@ public class PaymentReconciliation private constructor(
          * - the reversals of one allocation together exceed that allocation, or its reversals
          *   and refund allocations together reduce it below zero;
          * - the payment's net allocations and refunds together exceed the payment amount.
-         *   A reversal or refund allocation returns value to the payment, so value it frees
-         *   can be allocated again.
+         *   A reversal makes the reversed amount unapplied again, so it can be allocated
+         *   elsewhere. A refund allocation does not: it only shows which applied value a
+         *   refund took, and the refunded money is no longer the payment's to allocate.
          */
         @JvmStatic
         @JvmOverloads

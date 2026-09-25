@@ -25,6 +25,12 @@ import java.util.UUID
  *
  * The refunded amount no longer counts as applied to the document. A1 itself is unchanged.
  *
+ * A refund allocation does not make value available to allocate again. The refunded money
+ * has left the business: the [RefundRecord] reduces what the payment kept, and the refund
+ * allocation reduces what is applied by the same amount, so the payment's unallocated value
+ * is unchanged. Only a [PaymentAllocationReversal], which moves no money, makes applied
+ * value unapplied and reusable.
+ *
  * ## Optional
  *
  * A refund does not need a refund allocation. Money refunded from a payment's unapplied
