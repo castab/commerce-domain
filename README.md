@@ -609,7 +609,7 @@ Releases are published to **GitHub Packages** as a Maven artifact:
 |---|---|
 | Coordinates | `io.github.castab:booking-lifecycle:<version>` |
 | Repository | `https://maven.pkg.github.com/castab/booking-lifecycle` |
-| Versions | [GitHub Releases](https://github.com/castab/booking-lifecycle/releases). A release tagged `v0.1.0` is published as version `0.1.0`. |
+| Versions | [GitHub Releases](https://github.com/castab/booking-lifecycle/releases). A release tagged `v0.0.1` is published as version `0.0.1`. |
 
 A consuming build needs **both** the repository declaration and the dependency.
 `mavenCentral()` alone is not enough.
@@ -632,7 +632,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.github.castab:booking-lifecycle:0.1.0")
+    implementation("io.github.castab:booking-lifecycle:0.0.1")
 }
 ```
 
@@ -717,18 +717,18 @@ A GitHub Release is the only point where a version is published. Work on branche
 
 1. Merge the desired changes to `main` and confirm CI is green.
 2. Create a GitHub Release with a new tag of the form `vMAJOR.MINOR.PATCH`, for example
-   `v0.1.0`. Prerelease suffixes such as `v0.2.0-alpha.1` are also accepted.
+   `v0.0.1`. Prerelease suffixes such as `v0.1.0-alpha.1` are also accepted.
 3. Publishing the release triggers the [Publish workflow](.github/workflows/publish.yml).
    It validates the tag and runs `./gradlew clean build` on Java 25.
-4. If every test passes, the workflow publishes the version without the `v` (`0.1.0`) to
+4. If every test passes, the workflow publishes the version without the `v` (`0.0.1`) to
    GitHub Packages. If the tag is malformed or any test fails, nothing is published.
 
-Tags that don't match the format are rejected: `0.1.0` (no `v`), `v0.1`, `v01.0.0`,
+Tags that don't match the format are rejected: `0.0.1` (no `v`), `v0.1`, `v01.0.0`,
 build metadata such as `v1.0.0+build.5`, and `SNAPSHOT` versions. No release version is
 ever written into source-controlled files.
 
 **Published versions are immutable.** Never try to overwrite a published version. If
-`0.1.0` has a problem, fix it and release `0.1.1`. If a Publish run fails before
+`0.0.1` has a problem, fix it and release `0.0.2`. If a Publish run fails before
 uploading anything (for example, a transient error), use **Re-run jobs** on that run.
 
 ## Current scope

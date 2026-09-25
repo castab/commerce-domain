@@ -1,7 +1,7 @@
 name: Publish
 
 # The only publication path: publishing a GitHub Release whose tag is vMAJOR.MINOR.PATCH
-# (optionally with a prerelease suffix, e.g. v0.2.0-alpha.1). A failed run can be
+# (optionally with a prerelease suffix, e.g. v0.1.0-alpha.1). A failed run can be
 # retried with "Re-run jobs" on the same release.
 on:
   release:
@@ -31,7 +31,7 @@ jobs:
         run: |
           semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
           if [[ ! "$TAG" =~ $semver ]]; then
-            echo "::error::Release tag '$TAG' is not of the form vMAJOR.MINOR.PATCH[-PRERELEASE] (e.g. v0.1.0, v0.2.0-alpha.1)."
+            echo "::error::Release tag '$TAG' is not of the form vMAJOR.MINOR.PATCH[-PRERELEASE] (e.g. v0.0.1, v0.1.0-alpha.1)."
             exit 1
           fi
           if [[ "$TAG" == *SNAPSHOT* ]]; then
