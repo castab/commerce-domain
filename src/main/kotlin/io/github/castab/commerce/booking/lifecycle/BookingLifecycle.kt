@@ -23,7 +23,7 @@ package io.github.castab.commerce.booking.lifecycle
  *
  * ```kotlin
  * data class CateringQuote(
- *     val customerId: CustomerId,
+ *     val customerId: Customer.Id,
  *     val total: BigDecimal,
  * ) : BookingLifecycle.Active.Quote {
  *     override fun toBooking(): CateringBooking = CateringBooking(customerId, total)

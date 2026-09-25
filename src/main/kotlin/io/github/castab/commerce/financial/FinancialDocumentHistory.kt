@@ -2,7 +2,7 @@
 
 package io.github.castab.commerce.financial
 
-import io.github.castab.commerce.customer.CustomerId
+import io.github.castab.commerce.customer.Customer
 import java.util.UUID
 
 /**
@@ -85,7 +85,7 @@ fun FinancialDocument.retrieveLatestVersion(from: FinancialDocumentHistory): Fin
 
 private fun FinancialDocument?.checkMatches(
     reference: FinancialDocumentReference,
-    customerId: CustomerId,
+    customerId: Customer.Id,
 ): FinancialDocument? {
     check(this == null || (this.reference == reference && this.customerId == customerId)) {
         "History returned ${this?.reference} for customer ${this?.customerId} " +

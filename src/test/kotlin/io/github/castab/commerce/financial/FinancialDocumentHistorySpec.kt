@@ -1,6 +1,6 @@
 package io.github.castab.commerce.financial
 
-import io.github.castab.commerce.customer.CustomerId
+import io.github.castab.commerce.customer.Customer
 import io.github.castab.commerce.financial.ChangeOrder.Change
 import io.github.castab.commerce.financial.fixtures.InMemoryFinancialDocumentHistory
 import io.github.castab.commerce.financial.fixtures.TEST_CUSTOMER_ID
@@ -96,7 +96,7 @@ class FinancialDocumentHistorySpec :
                         invoiceV5.id,
                         Version.of(4),
                         invoiceV5.lineItems,
-                        CustomerId(UUID.randomUUID()),
+                        Customer.Id(UUID.randomUUID()),
                     )
                 val history = mockk<FinancialDocumentHistory>()
                 every { history.retrieveVersion(invoiceV5.previousReference!!) } returns wrongCustomer
@@ -151,7 +151,7 @@ class FinancialDocumentHistorySpec :
                 val source = lineage().first()
                 val history = mockk<FinancialDocumentHistory>()
                 every { history.retrieveLatestVersion(source.id) } returns
-                    FinancialDocument.Invoice.restore(source.id, Version.of(5), source.lineItems, CustomerId(UUID.randomUUID()))
+                    FinancialDocument.Invoice.restore(source.id, Version.of(5), source.lineItems, Customer.Id(UUID.randomUUID()))
 
                 shouldThrow<IllegalStateException> { source.retrieveLatestVersion(from = history) }
             }

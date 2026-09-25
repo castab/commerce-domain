@@ -2,11 +2,6 @@ package io.github.castab.commerce.customer
 
 import java.util.UUID
 
-/** Stable identity shared by bookings and commercial documents. */
-data class CustomerId(
-    val value: UUID,
-)
-
 /** A person's required name, without jurisdiction-specific parsing. */
 data class CustomerName(
     val value: String,
@@ -36,8 +31,13 @@ data class PhoneNumber(
 
 /** Minimal durable identity of the person doing business with an application. */
 data class Customer(
-    val id: CustomerId,
+    val id: Id,
     val name: CustomerName,
     val email: EmailAddress,
     val phoneNumber: PhoneNumber,
-)
+) {
+    /** Stable identity shared by bookings and commercial documents. */
+    data class Id(
+        val value: UUID,
+    )
+}

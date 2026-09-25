@@ -10,9 +10,10 @@ class CustomerSpec :
         test("customer retains only identity and contact values") {
             val uuid = UUID.randomUUID()
             val customer =
-                Customer(CustomerId(uuid), CustomerName("Bob Smith"), EmailAddress("bob@example.com"), PhoneNumber("+44 20 7946 0958"))
+                Customer(Customer.Id(uuid), CustomerName("Bob Smith"), EmailAddress("bob@example.com"), PhoneNumber("+44 20 7946 0958"))
 
             customer.id.value shouldBe uuid
+            Customer::class.java.getDeclaredField("id").type shouldBe Customer.Id::class.java
             customer.name.value shouldBe "Bob Smith"
             customer.email.value shouldBe "bob@example.com"
             customer.phoneNumber.value shouldBe "+44 20 7946 0958"

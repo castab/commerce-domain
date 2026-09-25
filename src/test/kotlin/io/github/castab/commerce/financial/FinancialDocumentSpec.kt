@@ -1,6 +1,6 @@
 package io.github.castab.commerce.financial
 
-import io.github.castab.commerce.customer.CustomerId
+import io.github.castab.commerce.customer.Customer
 import io.github.castab.commerce.financial.ChangeOrder.Change
 import io.github.castab.commerce.financial.fixtures.TEST_CUSTOMER_ID
 import io.github.castab.commerce.financial.fixtures.USD
@@ -89,7 +89,7 @@ class FinancialDocumentSpec :
                 val invoice = quote.toInvoice()
 
                 listOf(estimate, revised, quote, invoice).map { it.customerId }.toSet() shouldBe setOf(TEST_CUSTOMER_ID)
-                val anotherCustomer = CustomerId(UUID.randomUUID())
+                val anotherCustomer = Customer.Id(UUID.randomUUID())
                 FinancialDocument.Estimate.create(estimate.id, items, customerId = anotherCustomer) shouldNotBe estimate
             }
 
@@ -297,9 +297,9 @@ class FinancialDocumentSpec :
                     FinancialDocument.Quote::class.java,
                     FinancialDocument.Invoice::class.java,
                 ).forEach { stage ->
-                    val create = stage.getMethod("create", UUID::class.java, List::class.java, CustomerId::class.java)
+                    val create = stage.getMethod("create", UUID::class.java, List::class.java, Customer.Id::class.java)
                     Modifier.isStatic(create.modifiers) shouldBe true
-                    create.parameterTypes.toList() shouldContainExactly listOf(UUID::class.java, List::class.java, CustomerId::class.java)
+                    create.parameterTypes.toList() shouldContainExactly listOf(UUID::class.java, List::class.java, Customer.Id::class.java)
                 }
             }
         }

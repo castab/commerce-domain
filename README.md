@@ -23,7 +23,7 @@ It currently contains customer identity, booking records and lifecycle, financia
 | [Payment reconciliation](#payment-reconciliation) | `io.github.castab.commerce.payment` | Immutable payment records, payment allocations, allocation reversals, refund records, and refund allocations, with derived payment and document reconciliation. |
 
 The booking lifecycle protocol remains independent of financial documents. Booking
-records and financial documents both reference `CustomerId`. The payment domain references
+records and financial documents both reference `Customer.Id`. The payment domain references
 financial documents, one way only. A financial document never knows about its payments.
 
 The domains share one design stance. Lifecycle progression is expressed by the type
@@ -201,7 +201,7 @@ to each application.
 
 ```kotlin
 data class CateringQuote(
-    val customerId: CustomerId,
+    val customerId: Customer.Id,
     val total: BigDecimal,
 ) : BookingLifecycle.Active.Quote {
     // transition implementations, shown below
@@ -387,7 +387,7 @@ package com.example.catering
 
 import io.github.castab.commerce.booking.BookingId
 import io.github.castab.commerce.booking.lifecycle.BookingLifecycle
-import io.github.castab.commerce.customer.CustomerId
+import io.github.castab.commerce.customer.Customer
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.UUID
@@ -396,7 +396,7 @@ data class MenuSelection(val item: String, val servings: Int)
 
 data class CateringInitialRequest(
     val bookingId: BookingId,
-    val customerId: CustomerId,
+    val customerId: Customer.Id,
     val eventDate: LocalDate,
     val selections: List<MenuSelection>,
     val estimatedTotal: BigDecimal,
@@ -411,7 +411,7 @@ data class CateringInitialRequest(
 
 data class CateringQuote(
     val bookingId: BookingId,
-    val customerId: CustomerId,
+    val customerId: Customer.Id,
     val eventDate: LocalDate,
     val selections: List<MenuSelection>,
     val total: BigDecimal,
@@ -431,7 +431,7 @@ data class CateringQuote(
 
 data class CateringBooking(
     val bookingId: BookingId,
-    val customerId: CustomerId,
+    val customerId: Customer.Id,
     val eventDate: LocalDate,
     val selections: List<MenuSelection>,
     val invoiceTotal: BigDecimal,
@@ -455,25 +455,25 @@ data class CateringBooking(
 
 data class CompletedCateringBooking(
     val bookingId: BookingId,
-    val customerId: CustomerId,
+    val customerId: Customer.Id,
     val eventDate: LocalDate,
     val finalTotal: BigDecimal,
 ) : BookingLifecycle.Terminal.Completed
 
 data class CancelledCateringInquiry(
     val bookingId: BookingId,
-    val customerId: CustomerId,
+    val customerId: Customer.Id,
 ) : BookingLifecycle.Terminal.Cancelled
 
 data class DeclinedCateringQuote(
     val bookingId: BookingId,
-    val customerId: CustomerId,
+    val customerId: Customer.Id,
     val quotedTotal: BigDecimal,
 ) : BookingLifecycle.Terminal.Cancelled
 
 data class CancelledCateringBooking(
     val bookingId: BookingId,
-    val customerId: CustomerId,
+    val customerId: Customer.Id,
     val eventDate: LocalDate,
 ) : BookingLifecycle.Terminal.Cancelled
 ```
@@ -483,7 +483,7 @@ Walking the canonical path:
 ```kotlin
 val request = CateringInitialRequest(
     bookingId = BookingId(UUID.randomUUID()),
-    customerId = CustomerId(UUID.randomUUID()),
+    customerId = Customer.Id(UUID.randomUUID()),
     eventDate = LocalDate.of(2026, 11, 14),
     selections = listOf(MenuSelection("Tamales", servings = 80)),
     estimatedTotal = BigDecimal("1200.00"),
@@ -722,7 +722,7 @@ are no phases such as `CompletedRefunded`, `PartiallyRefunded`, `DepositPaid`,
 ```text
 CUSTOMER                            Minimal person identity
 (id, name, email, phoneNumber)      Who is the person doing business with us?
-           │ CustomerId
+           │ Customer.Id
       ┌────┴──────────────┐
       ▼                   ▼
 BOOKING              FINANCIAL DOCUMENTS
@@ -732,13 +732,13 @@ BOOKING              FINANCIAL DOCUMENTS
       └── BookingLocation 0..1  Where does this booking take place?
 ```
 
-`Customer` contains exactly an ID, name, email, and phone number. Its `CustomerId` is a
+`Customer` contains exactly an ID, name, email, and phone number. Its `Customer.Id` is a
 UUID-backed value. It has no address, postal code, booking history, or payment information.
 `Booking` identifies the service arrangement and references that customer by ID. The
 application still owns the concrete lifecycle phase models and business transitions.
 
 Each `BookingContact` has its own ID and booking ID. `CustomerContact` references an
-existing `CustomerId` and copies no name, email, or phone. `ExternalContact` describes a
+existing `Customer.Id` and copies no name, email, or phone. `ExternalContact` describes a
 different person for this booking without creating a customer. It requires a name and at
 least one of email or phone. Several contacts can share a booking ID.
 
@@ -755,14 +755,14 @@ not perform retention or purging.
 
 Financial documents answer what was proposed, agreed to, or invoiced. Payment records and
 reconciliation answer what was paid, refunded, and allocated. Documents retain only the
-`CustomerId` relationship; they do not copy customer contact details or event addresses.
+`Customer.Id` relationship; they do not copy customer contact details or event addresses.
 
 ## Financial documents
 
 Package `io.github.castab.commerce.financial`. Immutable, versioned commercial documents:
 estimates, quotes, and invoices.
 
-`create` and `restore` on every stage now require `CustomerId`. This is a deliberate
+`create` and `restore` on every stage now require `Customer.Id`. This is a deliberate
 source and binary API change: applications must supply and persist the customer reference
 for each document lineage. Revisions and stage transitions preserve it automatically.
 
@@ -948,7 +948,7 @@ import io.github.castab.commerce.financial.ChangeOrder
 import io.github.castab.commerce.financial.FinancialDocument
 import io.github.castab.commerce.financial.LineItem
 import io.github.castab.commerce.financial.Money
-import io.github.castab.commerce.customer.CustomerId
+import io.github.castab.commerce.customer.Customer
 import java.math.BigDecimal
 import java.util.Currency
 import java.util.UUID
@@ -975,7 +975,7 @@ val serviceFee = LineItem(
 // 1. Create an estimate: v1, no previous version.
 val estimateV1 = FinancialDocument.Estimate.create(
     id = UUID.randomUUID(),
-    customerId = CustomerId(UUID.randomUUID()),
+    customerId = Customer.Id(UUID.randomUUID()),
     lineItems = listOf(tamales, serviceFee),
 )
 estimateV1.total                      // 898.00 USD  (600.00 + 250.00 + 48.00 tax)
@@ -1027,7 +1027,7 @@ A sale that never had an estimate or quote starts its lineage as an invoice:
 ```kotlin
 val receipt = FinancialDocument.Invoice.create(
     id = UUID.randomUUID(),
-    customerId = CustomerId(UUID.randomUUID()),
+    customerId = Customer.Id(UUID.randomUUID()),
     lineItems = listOf(
         LineItem(
             id = UUID.randomUUID(),
@@ -1114,7 +1114,7 @@ class JdbiFinancialDocumentHistory(private val jdbi: Jdbi) : FinancialDocumentHi
 
     private fun toDocument(rs: ResultSet): FinancialDocument {
         val id = rs.getObject("document_id", UUID::class.java)
-        val customerId = CustomerId(rs.getObject("customer_id", UUID::class.java))
+        val customerId = Customer.Id(rs.getObject("customer_id", UUID::class.java))
         val version = Version.of(rs.getInt("version"))
         val lineItems = readLineItems(rs)                      // your mapping
         return when (rs.getString("stage")) {
@@ -1185,7 +1185,7 @@ The complete public API of `io.github.castab.commerce.financial`, without KDoc a
 ```kotlin
 public sealed class FinancialDocument {
     public val id: UUID
-    public val customerId: CustomerId
+    public val customerId: Customer.Id
     public val version: Version
     public val previousVersion: Version?
     public val lineItems: List<LineItem>
@@ -1201,8 +1201,8 @@ public sealed class FinancialDocument {
         override fun changeOrder(changeOrder: ChangeOrder): Estimate
         public fun toQuote(): Quote
         public companion object {
-            public fun create(id: UUID, lineItems: List<LineItem>, customerId: CustomerId): Estimate
-            public fun restore(id: UUID, version: Version, lineItems: List<LineItem>, customerId: CustomerId): Estimate
+            public fun create(id: UUID, lineItems: List<LineItem>, customerId: Customer.Id): Estimate
+            public fun restore(id: UUID, version: Version, lineItems: List<LineItem>, customerId: Customer.Id): Estimate
         }
     }
 
@@ -1210,16 +1210,16 @@ public sealed class FinancialDocument {
         override fun changeOrder(changeOrder: ChangeOrder): Quote
         public fun toInvoice(): Invoice
         public companion object {
-            public fun create(id: UUID, lineItems: List<LineItem>, customerId: CustomerId): Quote
-            public fun restore(id: UUID, version: Version, lineItems: List<LineItem>, customerId: CustomerId): Quote
+            public fun create(id: UUID, lineItems: List<LineItem>, customerId: Customer.Id): Quote
+            public fun restore(id: UUID, version: Version, lineItems: List<LineItem>, customerId: Customer.Id): Quote
         }
     }
 
     public class Invoice : FinancialDocument {
         override fun changeOrder(changeOrder: ChangeOrder): Invoice
         public companion object {
-            public fun create(id: UUID, lineItems: List<LineItem>, customerId: CustomerId): Invoice
-            public fun restore(id: UUID, version: Version, lineItems: List<LineItem>, customerId: CustomerId): Invoice
+            public fun create(id: UUID, lineItems: List<LineItem>, customerId: Customer.Id): Invoice
+            public fun restore(id: UUID, version: Version, lineItems: List<LineItem>, customerId: Customer.Id): Invoice
         }
     }
 }
@@ -1521,7 +1521,7 @@ deposit, or only invoices take payment, is your policy.
 ### Example: deposit, later invoice version, partial refund
 
 ```kotlin
-import io.github.castab.commerce.customer.CustomerId
+import io.github.castab.commerce.customer.Customer
 import io.github.castab.commerce.financial.ChangeOrder
 import io.github.castab.commerce.financial.FinancialDocument
 import io.github.castab.commerce.financial.LineItem
@@ -1540,7 +1540,7 @@ val catering = LineItem(UUID.randomUUID(), "Catering", quantity = null, price = 
 val rentals = LineItem(UUID.randomUUID(), "Table rentals", quantity = null, price = usd("200.00"), taxAmount = usd("0.00"))
 
 // D/v1: a $1,000 quote.
-val quoteV1 = FinancialDocument.Quote.create(id = UUID.randomUUID(), customerId = CustomerId(UUID.randomUUID()), lineItems = listOf(catering))
+val quoteV1 = FinancialDocument.Quote.create(id = UUID.randomUUID(), customerId = Customer.Id(UUID.randomUUID()), lineItems = listOf(catering))
 
 // A $300 card deposit arrives through Stripe and is applied to the quote as it stands.
 val deposit = PaymentRecord(
@@ -1880,7 +1880,7 @@ uploading anything (for example, a transient error), use **Re-run jobs** on that
 
 What exists today:
 
-- the minimal `Customer` identity, UUID-backed `CustomerId`, and validated name,
+- the minimal `Customer` identity, UUID-backed `Customer.Id`, and validated name,
   email, and phone value objects;
 - the `Booking` to customer association, separate `BookingContact` variants, and
   `BookingLocation` with a postal address;

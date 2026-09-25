@@ -1,6 +1,6 @@
 package io.github.castab.commerce.financial
 
-import io.github.castab.commerce.customer.CustomerId
+import io.github.castab.commerce.customer.Customer
 import io.github.castab.commerce.financial.ChangeOrder.Change
 import java.util.Collections
 import java.util.Currency
@@ -80,7 +80,7 @@ sealed class FinancialDocument(
     /** The identity of the lineage this snapshot belongs to. Shared by every version. */
     val id: UUID,
     /** The customer this document lineage concerns; shared by every snapshot. */
-    val customerId: CustomerId,
+    val customerId: Customer.Id,
     /** The position of this snapshot within its lineage. */
     val version: Version,
     /**
@@ -198,7 +198,7 @@ sealed class FinancialDocument(
      */
     class Estimate private constructor(
         id: UUID,
-        customerId: CustomerId,
+        customerId: Customer.Id,
         version: Version,
         previousVersion: Version?,
         lineItems: List<LineItem>,
@@ -230,7 +230,7 @@ sealed class FinancialDocument(
             fun create(
                 id: UUID,
                 lineItems: List<LineItem>,
-                customerId: CustomerId,
+                customerId: Customer.Id,
             ): Estimate = Estimate(id, customerId, Version.INITIAL, null, lineItems)
 
             /**
@@ -246,7 +246,7 @@ sealed class FinancialDocument(
                 id: UUID,
                 version: Version,
                 lineItems: List<LineItem>,
-                customerId: CustomerId,
+                customerId: Customer.Id,
             ): Estimate = Estimate(id, customerId, version, version.previous(), lineItems)
         }
     }
@@ -260,7 +260,7 @@ sealed class FinancialDocument(
      */
     class Quote private constructor(
         id: UUID,
-        customerId: CustomerId,
+        customerId: Customer.Id,
         version: Version,
         previousVersion: Version?,
         lineItems: List<LineItem>,
@@ -292,7 +292,7 @@ sealed class FinancialDocument(
             fun create(
                 id: UUID,
                 lineItems: List<LineItem>,
-                customerId: CustomerId,
+                customerId: Customer.Id,
             ): Quote = Quote(id, customerId, Version.INITIAL, null, lineItems)
 
             /**
@@ -308,7 +308,7 @@ sealed class FinancialDocument(
                 id: UUID,
                 version: Version,
                 lineItems: List<LineItem>,
-                customerId: CustomerId,
+                customerId: Customer.Id,
             ): Quote = Quote(id, customerId, version, version.previous(), lineItems)
 
             @JvmSynthetic
@@ -330,7 +330,7 @@ sealed class FinancialDocument(
      */
     class Invoice private constructor(
         id: UUID,
-        customerId: CustomerId,
+        customerId: Customer.Id,
         version: Version,
         previousVersion: Version?,
         lineItems: List<LineItem>,
@@ -354,7 +354,7 @@ sealed class FinancialDocument(
             fun create(
                 id: UUID,
                 lineItems: List<LineItem>,
-                customerId: CustomerId,
+                customerId: Customer.Id,
             ): Invoice = Invoice(id, customerId, Version.INITIAL, null, lineItems)
 
             /**
@@ -370,7 +370,7 @@ sealed class FinancialDocument(
                 id: UUID,
                 version: Version,
                 lineItems: List<LineItem>,
-                customerId: CustomerId,
+                customerId: Customer.Id,
             ): Invoice = Invoice(id, customerId, version, version.previous(), lineItems)
 
             @JvmSynthetic

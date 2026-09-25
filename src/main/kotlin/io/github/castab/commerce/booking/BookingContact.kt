@@ -1,6 +1,6 @@
 package io.github.castab.commerce.booking
 
-import io.github.castab.commerce.customer.CustomerId
+import io.github.castab.commerce.customer.Customer
 import io.github.castab.commerce.customer.CustomerName
 import io.github.castab.commerce.customer.EmailAddress
 import io.github.castab.commerce.customer.PhoneNumber
@@ -20,7 +20,7 @@ sealed interface BookingContact {
     data class CustomerContact(
         override val id: BookingContactId,
         override val bookingId: BookingId,
-        val customerId: CustomerId,
+        val customerId: Customer.Id,
     ) : BookingContact
 
     /** A booking-specific person who need not become a durable customer. */

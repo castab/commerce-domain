@@ -1,7 +1,6 @@
 package io.github.castab.commerce.booking
 
 import io.github.castab.commerce.customer.Customer
-import io.github.castab.commerce.customer.CustomerId
 import io.github.castab.commerce.customer.CustomerName
 import io.github.castab.commerce.customer.EmailAddress
 import io.github.castab.commerce.customer.PhoneNumber
@@ -12,7 +11,7 @@ import java.util.UUID
 
 class BookingModelsSpec :
     FunSpec({
-        val customerId = CustomerId(UUID.randomUUID())
+        val customerId = Customer.Id(UUID.randomUUID())
         val customer = Customer(customerId, CustomerName("Bob Smith"), EmailAddress("bob@example.com"), PhoneNumber("559-555-1111"))
         val first = Booking(BookingId(UUID.randomUUID()), customer.id)
         val second = Booking(BookingId(UUID.randomUUID()), customer.id)

@@ -1,6 +1,6 @@
 package io.github.castab.commerce.booking
 
-import io.github.castab.commerce.customer.CustomerId
+import io.github.castab.commerce.customer.Customer
 import java.util.UUID
 
 /** Stable identity of a booking across application-owned lifecycle phases. */
@@ -15,5 +15,5 @@ data class BookingId(
  */
 data class Booking(
     val id: BookingId,
-    val customerId: CustomerId,
+    val customerId: Customer.Id,
 )
