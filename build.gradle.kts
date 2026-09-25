@@ -102,7 +102,8 @@ publishing {
                     "lifecycle APIs for Kotlin/JVM: a type-level booking lifecycle protocol, " +
                     "versioned financial documents (estimates, quotes, and invoices), and " +
                     "payment reconciliation (payments, allocations, reversals, and refunds), " +
-                    "plus human and service identity with role-based authorization."
+                    "a provider-neutral payment adapter contract, and human and service " +
+                    "identity with role-based authorization."
                 url = "https://github.com/$githubRepository"
                 developers {
                     developer {

@@ -14,7 +14,7 @@ io.github.castab:commerce-domain:<version>
 ```
 
 It currently contains customer identity, booking records and lifecycle, financial
-documents, payment reconciliation, and principal authorization:
+documents, payment reconciliation, a payment adapter contract, and principal authorization:
 
 | Domain | Package | What it provides |
 |---|---|---|
@@ -23,6 +23,7 @@ documents, payment reconciliation, and principal authorization:
 | [Financial documents](#financial-documents) | `io.github.castab.commerce.financial` | Immutable, versioned commercial documents (`Estimate → Quote → Invoice`) with line items, change orders, derived totals, and persistence-agnostic history lookup. |
 | [Payment reconciliation](#payment-reconciliation) | `io.github.castab.commerce.payment` | Immutable payment records, payment allocations, allocation reversals, refund records, and refund allocations, with derived payment and document reconciliation. |
 | [Principal authorization](#principal-authorization) | `io.github.castab.commerce.staff` | Human and service identities, extensible roles and permissions, resolver ports, and additive role-based authorization. |
+| [Payment adapter contract](#payment-adapter-contract) | `io.github.castab.commerce.payment.adapter` | Provider-neutral payment and refund instructions, observations, capability descriptions, and event decisions. |
 
 The booking lifecycle protocol remains independent of financial documents. Booking
 records and financial documents both reference `Customer.Id`. The payment domain references
@@ -43,6 +44,7 @@ is `kotlin-stdlib`.
 - [Financial documents](#financial-documents)
 - [Payment reconciliation](#payment-reconciliation)
 - [Principal authorization](#principal-authorization)
+- [Payment adapter contract](#payment-adapter-contract)
 - [Using both domains together](#using-both-domains-together)
 - [What this library is not](#what-this-library-is-not)
 - [Requirements](#requirements)
@@ -1448,8 +1450,8 @@ records what happened.
 `PaymentMethod` (`CASH`, `CHECK`, `CARD`, `BANK_TRANSFER`, `DIGITAL_WALLET`, `OTHER`) names
 the instrument, not the processor. The processor goes in an optional
 `ExternalPaymentReference(provider, reference)` or `ExternalRefundReference(provider,
-reference)`, such as `CARD` with `("stripe", "pi_123")` or `DIGITAL_WALLET` with
-`("paypal", ...)`. The two reference types are distinct so that a payment's transaction id
+reference)`, such as `CARD` with `("provider-a", "payment-123")` or `DIGITAL_WALLET` with
+`("provider-b", ...)`. The two reference types are distinct so that a payment's transaction id
 cannot be recorded as a refund's. The library never interprets them and depends on no
 processor SDK.
 
@@ -1546,13 +1548,13 @@ val rentals = LineItem(UUID.randomUUID(), "Table rentals", quantity = null, pric
 // D/v1: a $1,000 quote.
 val quoteV1 = FinancialDocument.Quote.create(id = UUID.randomUUID(), customerId = Customer.Id(UUID.randomUUID()), lineItems = listOf(catering))
 
-// A $300 card deposit arrives through Stripe and is applied to the quote as it stands.
+// A $300 card deposit arrives through a provider and is applied to the quote as it stands.
 val deposit = PaymentRecord(
     id = UUID.randomUUID(),
     amount = usd("300.00"),
     method = PaymentMethod.CARD,
     receivedAt = Instant.parse("2026-05-01T17:00:00Z"),
-    externalReference = ExternalPaymentReference(provider = "stripe", reference = "pi_3Nabc"),
+    externalReference = ExternalPaymentReference(provider = "provider-a", reference = "payment-123"),
 )
 val depositAllocation = PaymentAllocation.create(
     id = UUID.randomUUID(),
@@ -1616,13 +1618,13 @@ Persistence stays in your application. A relational store would naturally hold o
 per record type (`payments`, `payment_allocations`, `payment_allocation_reversals`,
 `refunds`, `refund_allocations`), with references as foreign keys and uniqueness of
 external references enforced there if you want it. The library ships no schema,
-repository, entity, or adapter.
+repository, entity, or provider adapter implementation.
 
 The payment domain records and reconciles actual payment and refund facts. It is not an
 accounting ledger: there are no accounts, journals, debits, credits, or posting periods.
 It also does not model store or customer credit, gift cards, credit memos, chargebacks,
 disputes, authorization and capture, processor fees, tips, payouts, settlement batches,
-bank reconciliation, currency conversion, card data, or checkout. Business policy (who may
+bank reconciliation, currency conversion, card data, or checkout UI. Business policy (who may
 pay what, refund windows, refund-to-original-method rules, deposit percentages) stays in
 your application.
 
@@ -1844,6 +1846,105 @@ are outside this version. A future audit model may use `PrincipalId` for `record
 or `performedBy`, preserving the distinction between `UserId` and `ServiceId`;
 existing commerce records are unchanged.
 
+## Payment adapter contract
+
+Package `io.github.castab.commerce.payment.adapter` defines the semantic boundary between
+a consuming application and external payment providers. It does not define transport. An adapter
+authenticates provider input, translates it to these models, and may be stateless.
+The consuming application remains the durable source of truth: `PaymentRecord` means money arrived and
+`RefundRecord` means money left. A prepared checkout, failure observation, or provider
+event does not itself create either fact. An adapter can run as a serverless function,
+service, monolith component, message consumer, or another arrangement.
+
+The existing `ExternalPaymentReference` and `ExternalRefundReference` identify
+provider-side payment and refund objects. Their `provider` strings match
+`PaymentProviderId.value`. `ProviderEventReference(provider, eventId)` identifies an
+**event**, not the provider-side object: one object may generate many events. The
+adapter contract does not require retaining raw provider payloads.
+
+### Payment preparation
+
+The consuming application creates an `AuthorizedPayment(paymentId, provider, amount)` after deciding the
+authoritative amount. The UI and adapter never calculate or override it. For an adapter
+with `PAYMENT_INITIATION`, it sends `PreparePayment(authorizedPayment)`. A
+`PaymentPrepared` carries the same application-supplied UUID, the external payment reference, and
+optionally a hosted checkout URI and expiry. `assessPreparation` checks identity,
+provider, and capabilities. An observation-only provider needs no preparation step;
+the application can still use `AuthorizedPayment` to validate its eventual observation.
+
+```text
+Application -- PreparePayment(P123, 500 USD) --> Adapter -- provider operation --> Provider
+Application <-- PaymentPrepared(P123, provider reference, optional checkout URI) -- Adapter
+```
+
+`PaymentAdapterCapabilities` is a snapshot of supported operations:
+`PAYMENT_INITIATION`, `HOSTED_CHECKOUT`, `ASYNC_PAYMENT_CONFIRMATION`, `REFUNDS`, and
+`PARTIAL_REFUNDS`. An empty set is valid for an observation-only adapter. Hosted checkout
+details are optional even when supported. Check `assessRefundRequest` before asking an
+adapter to refund; a provider without `REFUNDS` or `PARTIAL_REFUNDS` receives an explicit
+unsupported result. Capability checks govern outbound requests. An authenticated success
+observation is still checked against the application's payment facts even if capability advertising later
+changes.
+
+### Provider observations and idempotency
+
+```text
+Provider -- event --> Adapter -- verify authenticity; translate --> Application
+Application -- assessPaymentSuccess(P123, provider reference, event, amount) -->
+    Accepted(PaymentRecord, ProviderEventReceipt) | AlreadyProcessed | Rejected(reason)
+```
+
+The adapter must verify its provider-specific input before producing a trusted contract
+object. The consuming application separately validates business integrity: the payment UUID,
+provider, exact currency, numerically equal authorized amount, optional prepared
+reference, and existing records. A trusted observation is not automatically accepted.
+`PaymentFailed` produces no payment record. A completed payment cannot be replaced by a
+failure or a second success. The application owns any pending request status; these
+messages do not add a second lifecycle to `PaymentRecord`.
+
+The application supplies relevant records and receipts to the pure
+`PaymentAdapterProcessing` functions. For an accepted event, persist the returned record
+and receipt in **one transaction**. Enforce unique application-owned payment/refund IDs, unique
+provider object references, and unique `(provider, eventId)` receipts in that storage:
+
+```text
+BEGIN
+  insert receipt, unique(provider, eventId)
+  insert PaymentRecord or RefundRecord (or update application request status for failure)
+COMMIT
+
+Provider retries the same event --> AlreadyProcessed; no duplicate financial effect
+```
+
+The caller must recheck under its transaction's concurrency controls; an earlier pure
+decision cannot itself reserve an event ID. Reusing the same event ID for another
+payment or refund target is rejected as `EVENT_CONFLICT`. An unexpected storage or provider failure
+remains an application concern. Do not acknowledge a provider event as processed when
+the application's transaction failed if the provider can retry delivery.
+
+### Refunds
+
+```text
+Application -- RequestRefund(refundId, paymentId, provider payment reference, amount) --> Adapter
+Adapter -- provider-specific refund operation --> Provider
+Provider -- event --> Adapter -- verify; translate --> RefundSucceeded or RefundFailed
+Application -- assessRefundSuccess --> Accepted(RefundRecord, ProviderEventReceipt)
+```
+
+The consuming application supplies the refund UUID and amount. The request references a recorded payment and
+its external payment object. `assessRefundRequest` checks the provider's capability,
+payment identity, currency, and cumulative refundable amount. `assessRefundSuccess`
+also checks the actual amount and refund reference before creating a `RefundRecord`.
+Partial refunds are supported up to the remaining payment amount; the existing
+`PaymentReconciliation` still validates complete payment, allocation, and refund
+history. `RefundFailed` creates no refund record. The application supplies prior refunds
+and receipts and persists each accepted result atomically. No adapter database is
+required.
+
+These types contain no provider SDK, webhook format, HTTP route, message topic,
+serialization framework, credential, or persistence implementation. A future adapter
+can use any transport while preserving these meanings.
+
 ## Using both domains together
 
 The booking lifecycle and financial document stages are independent and compose in
@@ -1998,6 +2099,8 @@ What exists today:
   `PaymentAllocationReversal`, `RefundRecord`, `RefundAllocation`, `PaymentMethod`, the
   external reference types, and the derived `PaymentReconciliation` and
   `FinancialDocumentReconciliation`;
+- the provider-neutral payment adapter contract for preparing payments, observing
+  provider events, deciding payment and refund effects, and tracking event receipts;
 - the staff domain: human `User` and non-human `ServiceIdentity` principals, distinct
   UUID-backed IDs, extensible roles and permissions, resolver ports,
   `RoleBasedPermissionResolver`, and the `PrincipalId.can` extension;
