@@ -15,8 +15,11 @@ version = providers.gradleProperty("version").getOrElse("0.0.0-SNAPSHOT")
 
 // "owner/repository" on GitHub. GitHub Actions provides GITHUB_REPOSITORY; the
 // default applies to local builds. Used for the GitHub Packages URL and POM links.
+// This is the repository that hosts the package, not the artifact identity: the
+// artifactId comes from rootProject.name (settings.gradle.kts), so renaming the
+// GitHub repository does not change the published coordinates.
 val githubRepository = providers.environmentVariable("GITHUB_REPOSITORY")
-    .getOrElse("castab/booking-lifecycle")
+    .getOrElse("castab/commerce-domain")
 
 // ---------------------------------------------------------------------------
 // Java 25 is an intentional, hard requirement of this library.
@@ -71,10 +74,10 @@ publishing {
             from(components["java"])
 
             pom {
-                name = "booking-lifecycle"
-                description = "A type-level booking lifecycle protocol for Kotlin/JVM: " +
-                    "application-owned domain types implement lifecycle phases, and the " +
-                    "legal transitions between phases are expressed by their interfaces."
+                name = "commerce-domain"
+                description = "Immutable, persistence-agnostic commerce domain models and " +
+                    "lifecycle APIs for Kotlin/JVM: a type-level booking lifecycle protocol " +
+                    "and versioned financial documents (estimates, quotes, and invoices)."
                 url = "https://github.com/$githubRepository"
                 developers {
                     developer {

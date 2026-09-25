@@ -1,6 +1,6 @@
 [versions]
 kotlin = "2.4.20"
-kotest = "6.2.3"
+kotest = "6.2.5"
 mockk = "1.14.11"
 
 [libraries]

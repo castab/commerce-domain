@@ -9,32 +9,56 @@ and why seemingly reasonable changes can be architecturally wrong.
 
 ## Repository mission
 
-`booking-lifecycle` defines a reusable type-level lifecycle topology for bookings.
+`commerce-domain` is a reusable library of immutable commerce domain models and lifecycle
+APIs, shared by multiple applications. Each domain lives in its own package beneath
+`io.github.castab.commerce` and is independent of the others:
 
-It does not own adopter business data.
+| Domain | Package | Style |
+|---|---|---|
+| Booking lifecycle | `io.github.castab.commerce.booking.lifecycle` | A type-level protocol. Adopters' own types implement the phases. The library owns no booking data. |
+| Financial documents | `io.github.castab.commerce.financial` | Concrete, library-owned immutable value types (`Estimate`, `Quote`, `Invoice`) whose invariants the library enforces. |
+
+The two styles are deliberate and not interchangeable. Read the rules for the domain you
+are changing: [Booking lifecycle domain](#booking-lifecycle-domain) and
+[Financial document domain](#financial-document-domain). The build, dependency,
+toolchain, and publication rules apply to the whole repository.
+
+Domains must not depend on each other. Neither package imports the other. Applications
+compose them (for example, a booking `Quote` phase model that holds a
+`FinancialDocument.Quote`). The library does not.
+
+For the booking lifecycle:
 
 > The library defines what may legally follow a lifecycle phase. The adopting application
 > defines whether, when, and how that transition occurs.
 
 If a proposed change describes data, policy, or activity *around* a booking rather than the
-booking lifecycle itself, it probably does not belong in the core lifecycle API.
+booking lifecycle itself, it probably does not belong in the booking lifecycle API.
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
-| `src/main/kotlin/io/github/castab/bookinglifecycle/BookingLifecycle.kt` | The entire public API. |
-| `src/test/kotlin/io/github/castab/bookinglifecycle/BookingLifecycleSpec.kt` | Kotest `FunSpec` for the lifecycle contract. |
-| `src/test/kotlin/io/github/castab/bookinglifecycle/fixtures/TestBookingModels.kt` | Test-only "application-owned" models. |
+| `src/main/kotlin/io/github/castab/commerce/booking/lifecycle/BookingLifecycle.kt` | The entire booking lifecycle API. |
+| `src/main/kotlin/io/github/castab/commerce/financial/` | The financial document API: `FinancialDocument.kt` (the sealed class, its three stages, and change application), `Version.kt`, `Money.kt`, `LineItem.kt`, `ChangeOrder.kt`, `FinancialDocumentReference.kt`, and `FinancialDocumentHistory.kt` (the history SPI and its lookup extensions). |
+| `src/test/kotlin/io/github/castab/commerce/booking/lifecycle/BookingLifecycleSpec.kt` | Kotest `FunSpec` for the booking lifecycle contract. |
+| `src/test/kotlin/io/github/castab/commerce/booking/lifecycle/fixtures/TestBookingModels.kt` | Test-only "application-owned" booking models. |
+| `src/test/kotlin/io/github/castab/commerce/financial/*Spec.kt` | Kotest specs for the financial domain: `FinancialDocumentSpec`, `ChangeOrderSpec`, `FinancialDocumentHistorySpec`, `LineItemSpec`, `MoneySpec`, `VersionSpec`. |
+| `src/test/kotlin/io/github/castab/commerce/financial/fixtures/TestFinancialModels.kt` | Test-only money and line item helpers and an in-memory `FinancialDocumentHistory`. |
 | `build.gradle.kts`, `settings.gradle.kts`, `gradle.properties` | Single-module build with the Java 25 toolchain and the Maven publication. |
 | `gradle/libs.versions.toml` | Version catalog. |
 | `.github/workflows/ci.yml` | CI: build and test on Java 25 for pull requests and pushes to `main`. |
 | `.github/workflows/publish.yml` | Publish to GitHub Packages when a GitHub Release is published. |
 | `README.md`, `AGENTS.md` | Documentation. Keep both in sync with the code. |
 
-Package: `io.github.castab.bookinglifecycle`. Maven coordinates:
-`io.github.castab:booking-lifecycle`, published to
-`https://maven.pkg.github.com/castab/booking-lifecycle`.
+Maven coordinates: `io.github.castab:commerce-domain` (the artifactId is `rootProject.name`
+in `settings.gradle.kts`), published to the GitHub Packages registry of the repository that
+runs the Publish workflow (currently `https://maven.pkg.github.com/castab/commerce-domain`).
+
+# Booking lifecycle domain
+
+The sections from here through [Anti-patterns](#anti-patterns) govern
+`io.github.castab.commerce.booking.lifecycle`.
 
 ## Architectural invariants
 
@@ -128,9 +152,9 @@ them.
 
 ## Application data boundary
 
-Core lifecycle interfaces declare transitions only, with no properties and no data.
+Booking lifecycle interfaces declare transitions only, with no properties and no data.
 
-Avoid introducing types or fields such as:
+Avoid introducing types or fields such as these into the booking lifecycle:
 
 ```text
 Customer  Money  Invoice  QuoteData  Payment  Deposit  Actor  Event  Selection
@@ -138,7 +162,9 @@ Complaint  Refund  CancellationReason  bookingId  createdAt  version
 ```
 
 Add one only if a future architectural decision proves it is a lifecycle concept rather
-than adopter data. Booking identity in particular (how a quote and its booking are known
+than adopter data. `Money` and `Invoice` now exist in the financial package. That does not
+make them booking lifecycle concepts: never reference financial types from
+`BookingLifecycle`. Booking identity in particular (how a quote and its booking are known
 to be the same booking) is currently application-owned. See [Open questions](#open-questions).
 
 ## New lifecycle phase checklist
@@ -175,16 +201,175 @@ fulfilled.
   `Cancelled` plus a refund are different historical facts, and both remain expressible
   without new lifecycle phases.
 
+## Anti-patterns
+
+**State-property replacement.** Do not replace the type-level protocol with:
+
+```kotlin
+enum class BookingState { INITIAL_REQUEST, QUOTE, BOOKED, CANCELLED, COMPLETED }
+
+data class Booking(val state: BookingState /* ... */)
+```
+
+**Mutable lifecycle state.** Do not model progression as `var state: BookingState`. The
+intended model transforms one lifecycle-typed application model into another.
+
+**Universal transition engine.** Do not make `transition(from, to)` the primary lifecycle
+API when interface methods already express legal transitions.
+
+**Application data in lifecycle interfaces.**
+
+```kotlin
+interface Quote : Active {
+    val customer: Customer   // wrong: adopter data
+    val total: Money         // wrong: adopter data
+}
+```
+
+**Financial or support states as booking phases.** `Refunded`, `PartiallyRefunded`,
+`DepositPaid`, `Chargeback`, `Disputed`, `ComplaintOpened`, `CompletedRefunded`.
+
+**Revisions as phases.** `QuoteRevised`, `InvoiceSent`, `InvoiceRevised`.
+
+**Runtime emulation of illegal edges.** Do not add `fun complete(): Nothing = throw ...`
+to `InitialRequest`, or similar. An illegal edge must have no method at all.
+
+# Financial document domain
+
+These rules govern `io.github.castab.commerce.financial`. A `FinancialDocument` is one
+immutable snapshot of a commercial document. The domain describes what is charged and how
+that description evolves. It does not describe settlement.
+
+## Financial invariants
+
+These are non-negotiable without an explicit decision from the maintainer.
+
+1. **The stage is the sealed subtype.** `FinancialDocument` is a sealed class with exactly
+   `Estimate`, `Quote`, and `Invoice`. There is no stage enum or mutable stage/type
+   property driving behavior. `when` over a document is exhaustive.
+2. **Snapshots are immutable.** Nothing modifies a snapshot. Every change order and every
+   transition returns a new snapshot.
+3. **A lineage keeps one `UUID`.** Successors share the source's `id`, are at
+   `version.next()`, and have `previousVersion == source.version`. A lineage starts at
+   `Version.INITIAL` with `previousVersion == null`. Consequently `previousVersion` is
+   always the version immediately preceding `version`, and the base class checks this.
+4. **Lineages may start at any stage.** `Estimate.create`, `Quote.create`, and
+   `Invoice.create` are all first-class entry points. Direct invoice creation (point of
+   sale) is not a workaround.
+5. **Transitions move one stage forward.** `Estimate.toQuote()` and `Quote.toInvoice()`
+   only. No `Estimate.toInvoice()`, no reverse transitions, and nothing leaves `Invoice`
+   except its own change orders. Illegal transitions have no method.
+6. **A change order never changes the stage.** Each stage's `changeOrder` returns its own
+   type.
+7. **Change orders are ordered and atomic.** Changes apply in list order to a working copy.
+   The successor is constructed only after every change succeeds, so a failure yields no
+   snapshot at all.
+8. **Totals are derived.** `subtotal`, `taxAmount`, and `total` are calculated from line
+   items. No API accepts them.
+9. **One currency per document.** `Money` never converts or rounds. Mixed currencies are
+   rejected in `Money` arithmetic, within a `LineItem`, and within a document.
+10. **History is referenced, never embedded.** A snapshot holds no other snapshot and no
+    reference object to one. History is reached only through `FinancialDocumentHistory`,
+    one explicit lookup at a time.
+
+The topology, which code, KDoc, README, and tests must all agree on:
+
+```text
+Estimate ─ changeOrder() → Estimate     Estimate ─ toQuote() ──→ Quote
+Quote ──── changeOrder() → Quote        Quote ──── toInvoice() → Invoice
+Invoice ── changeOrder() → Invoice
+Entry points: Estimate.create, Quote.create, Invoice.create
+```
+
+## Construction and forgery
+
+- Stage constructors are **private**. Do not make them `internal`, `protected`, or public:
+  `internal` constructors are public in bytecode and callable from Java.
+- Cross-stage successors are built through `@JvmSynthetic internal` companion functions
+  (`Quote.successorOf`, `Invoice.successorOf`), invisible to Java and to other modules.
+- The stages are **not** data classes. A `copy()` would let callers forge versions,
+  previous-version links, or stages. Equality, `hashCode`, and `toString` are implemented
+  once, finally, on `FinancialDocument`.
+- `restore(id, version, lineItems)` exists on each stage only so persistence adapters and
+  `FinancialDocumentHistory` implementations can rebuild stored snapshots. It derives
+  `previousVersion` from `version` and cannot express any other link. Do not add
+  parameters that let callers choose `previousVersion`, totals, or anything else derived.
+- `Version` has a private constructor. `Version.of(n)` rejects `n < 1`. Don't add public
+  arithmetic beyond `next()`.
+
+## Values and collections
+
+- Every identifier is a `java.util.UUID`. Do not add id wrapper types (`FinancialDocumentId`,
+  `LineItemId`, ...). Do not add an id to `ChangeOrder` for symmetry. `Version` is a domain
+  value, not an identifier.
+- Money is `BigDecimal` plus `java.util.Currency`. Never `Double` or `Float`. Don't add
+  rounding, scale normalization, currency conversion, or exchange rates.
+- `LineItem.quantity == null` means flat-priced (subtotal = price). Otherwise
+  subtotal = price × quantity. `price` excludes tax, and `taxAmount` is the final tax for
+  the line. Do not rename it to `taxableAmount`, and do not turn it into a rate.
+- `LineItem`, `Money`, `FinancialDocumentReference`, and the `ChangeOrder.Change` types are
+  data classes, because `copy()` on them cannot break an invariant: every copy re-runs
+  validation. Keep validation in `init` blocks so this stays true.
+- Collections received from callers are copied into unmodifiable lists
+  (`toImmutableList()`), so neither the caller's list nor a cast to `MutableList` can change
+  a snapshot or a change order.
+- Change orders replace whole line items. Do not add field-level patch semantics or
+  nullable "unchanged" markers.
+
+## Persistence and concurrency boundary
+
+- `FinancialDocumentHistory` is the only history access point. It is an SPI implemented by
+  applications. The library must never ship an implementation tied to a database, and
+  must never load previous versions implicitly or recursively.
+- `retrievePreviousVersion` performs zero lookups for version 1 and exactly one lookup
+  otherwise. `retrieveVersion` performs exactly one lookup. `retrieveLatestVersion`
+  delegates by `id`. Keep these guarantees, and the tests that verify them with MockK.
+- Do not add locks, transactions, global registries, caches, or static mutable state.
+  Concurrent successors of the same snapshot are resolved by the persistence layer's
+  uniqueness or optimistic-concurrency check on `(id, version)`.
+
+## Out of scope for financial documents
+
+Never add payment or settlement concepts to any financial type: `amountPaid`, `balance`,
+`balanceDue`, `remainingBalance`, `paymentStatus`, `paymentMethod`, `paymentIntent(Id)`,
+`transactionId`, `refundAmount`, `paidAt`, `partiallyPaid`, `overdue`, payment history,
+payment processors (Stripe, Square, PayPal), or accounting ledgers. Payments are another
+bounded context that references a document by `FinancialDocumentReference`.
+
+Also out of scope: pricing rules, tax calculation, discount engines, customer or
+counterparty models, dates and due dates, document numbering, and serialization
+annotations. These are application data unless an architectural decision says otherwise.
+
+## Financial anti-patterns
+
+```kotlin
+enum class FinancialDocumentType { ESTIMATE, QUOTE, INVOICE }   // wrong: the subtype is the stage
+data class FinancialDocument(val type: FinancialDocumentType, ...)
+
+class Invoice(...) { var version: Version }                     // wrong: snapshots are immutable
+class Quote(val previous: Quote?)                               // wrong: embeds history recursively
+fun Estimate.toInvoice(): Invoice                               // wrong: an illegal edge
+Invoice.create(id, lineItems, total = ...)                      // wrong: totals are derived
+val balanceDue: Money                                           // wrong: payments are out of scope
+```
+
+# Repository-wide rules
+
+These sections apply to every domain and to the build.
+
+
 ## Persistence boundary
 
-There is no persistence in this repository. Do not add it incidentally while solving
-unrelated tasks.
+There is no persistence in this repository. `FinancialDocumentHistory` is an SPI that
+applications implement, not a persistence layer. Do not add persistence incidentally while
+solving unrelated tasks.
 
 When persistence eventually arrives:
 
 - keep it in a separate module, so the core stays persistence-agnostic;
-- do not add SQL, document, or ORM concerns (annotations, IDs, column names, versions)
-  to core types;
+- do not add SQL, document, or ORM concerns (annotations, surrogate keys, column names,
+  optimistic-lock columns) to domain types. The financial `UUID` id and `Version` are
+  domain concepts, not persistence concerns, and stay as they are;
 - do not force adopter business models into library-owned persistence models;
 - do not require an ORM, and keep low-level adapters such as JDBI possible;
 - let applications own transaction boundaries where appropriate.
@@ -218,7 +403,7 @@ dependency just to support CI or publishing.
   auto-download is disabled (`gradle.properties`), and no foojay resolver is applied, so a
   missing Java 25 fails the build. Do not lower any of these to accommodate a tool or a
   consumer.
-- Versions: Kotlin 2.4.20, Kotest 6.2.3, MockK 1.14.11 (`gradle/libs.versions.toml`).
+- Versions: Kotlin 2.4.20, Kotest 6.2.5, MockK 1.14.11 (`gradle/libs.versions.toml`).
   The Gradle wrapper is 9.7.0, the newest Gradle that Kotlin 2.4.20 declares full
   compatibility with, and its distribution checksum is pinned. Do not bump Gradle beyond
   what the Kotlin Gradle plugin officially supports.
@@ -269,57 +454,32 @@ dependency just to support CI or publishing.
 
 ## Kotlin design rules
 
-- Lifecycle phases are **interfaces**, not classes, enums, or sealed data carriers.
-- Use sealing intentionally: seal the taxonomy (`BookingLifecycle`, `Active`,
-  `Terminal`), and never seal the phases.
-- Keep transition functions abstract, with covariant-friendly return types.
-- Keep terminal interfaces transition-free.
+- Booking lifecycle phases are **interfaces**, not classes, enums, or sealed data carriers.
+- In the booking lifecycle, seal the taxonomy (`BookingLifecycle`, `Active`, `Terminal`)
+  and never seal the phases. Keep transition functions abstract, with covariant-friendly
+  return types, and keep terminal interfaces transition-free.
+- Financial document stages are final classes of a sealed class, with private
+  constructors, because the library owns their invariants.
 - Prefer compile-time topology over runtime string or enum state validation.
-- Keep the public API small. It is one file that a reader can understand in minutes.
+- Keep the public API small. Each domain should be readable in minutes. Don't add
+  abstraction layers, reflection, classpath scanning, service locators, dependency
+  injection, or coroutines to the main source set.
+- Keep Java callers in mind: `@JvmStatic` on companion factories, `@JvmField` on
+  constants, `@JvmSynthetic` on internal helpers that must not be callable from Java.
 - The build enables **`explicitApi()`**. Every public declaration needs an explicit
   visibility modifier (`public`) and, in practice, KDoc.
 - KDoc describes semantics: what a phase means, whether it is active or terminal, which
   edges are legal, and that implementations are application-owned. It does not describe
   implementation trivia or business policy. Never write something like "called after a
   deposit is paid".
+- Invalid arguments fail with `require` (`IllegalArgumentException`). A broken SPI
+  contract, such as a history returning the wrong snapshot, fails with `check`
+  (`IllegalStateException`).
 - Code style: `kotlin.code.style=official`.
-
-## Anti-patterns
-
-**State-property replacement.** Do not replace the type-level protocol with:
-
-```kotlin
-enum class BookingState { INITIAL_REQUEST, QUOTE, BOOKED, CANCELLED, COMPLETED }
-
-data class Booking(val state: BookingState /* ... */)
-```
-
-**Mutable lifecycle state.** Do not model progression as `var state: BookingState`. The
-intended model transforms one lifecycle-typed application model into another.
-
-**Universal transition engine.** Do not make `transition(from, to)` the primary lifecycle
-API when interface methods already express legal transitions.
-
-**Application data in lifecycle interfaces.**
-
-```kotlin
-interface Quote : Active {
-    val customer: Customer   // wrong: adopter data
-    val total: Money         // wrong: adopter data
-}
-```
-
-**Financial or support states as booking phases.** `Refunded`, `PartiallyRefunded`,
-`DepositPaid`, `Chargeback`, `Disputed`, `ComplaintOpened`, `CompletedRefunded`.
-
-**Revisions as phases.** `QuoteRevised`, `InvoiceSent`, `InvoiceRevised`.
-
-**Runtime emulation of illegal edges.** Do not add `fun complete(): Nothing = throw ...`
-to `InitialRequest`, or similar. An illegal edge must have no method at all.
 
 ## Testing expectations
 
-- Stack: Kotest 6.2.3 `FunSpec` with Kotest assertions on the JUnit Platform, plus MockK
+- Stack: Kotest 6.2.5 `FunSpec` with Kotest assertions on the JUnit Platform, plus MockK
   1.14.11. Do not use JUnit assertion APIs.
 - Use concrete, test-owned fixtures in `fixtures/TestBookingModels.kt` to show lifecycle
   semantics. Mocks are for showing that the protocol is mockable. Keep at least one real
@@ -334,6 +494,15 @@ to `InitialRequest`, or similar. An illegal edge must have no method at all.
 - Do not add a compile-testing library to prove that illegal calls fail to compile.
   Illegal calls are documented in the comment at the top of `BookingLifecycleSpec.kt` and
   in the README.
+- Financial tests use real `Money`, `LineItem`, and `ChangeOrder` values. Never mock
+  value objects. MockK is for collaborators, chiefly `FinancialDocumentHistory`, where
+  the tests verify exactly which lookups happen. Changes to financial semantics must
+  come with tests covering creation at every stage, versioning, lifecycle typing,
+  immutability (including defensive copies), line and document calculations, currency
+  rejection, change-order success and atomic failure, and history lookups.
+- `FinancialDocumentSpec` uses reflection to assert each stage's exact public operations,
+  that no stage has a callable constructor, and that snapshots hold no reference to other
+  snapshots. Update these deliberately. Never loosen them to make a change pass.
 - Tests must run on Java 25. Never lower the test runtime to get tests passing.
 
 Run:
@@ -352,23 +521,26 @@ The build cache is on. Add `--no-build-cache` to force the tests to actually run
 
 Any change to lifecycle topology or semantics must update, in the same change:
 
-- KDoc in `BookingLifecycle.kt`;
-- the README: Mermaid diagram, transition tree, phase table, API listing, examples, and
-  compile-error list;
-- this file: the topology block, invariants, and rules;
+- KDoc in `BookingLifecycle.kt` or in the financial sources;
+- the README: the relevant Mermaid diagram, transition tree, phase or stage table, API
+  listing, examples, and compile-error list;
+- this file: the topology blocks, invariants, and rules;
 - the tests.
 
-Code and documentation must never disagree about legal lifecycle edges. Use the term
-**phase** for lifecycle phases. Reserve "state" for the rejected state-property design
-and for the phrase "the transition methods are the state machine".
+Code and documentation must never disagree about legal lifecycle edges or Maven
+coordinates. In the booking lifecycle, use the term **phase**. In the financial domain,
+use **stage** (`Estimate`, `Quote`, `Invoice`) and **snapshot** (one immutable version).
+Reserve "state" for the rejected state-property design and for the phrase "the transition
+methods are the state machine".
 
 ## Scope discipline
 
 When solving a focused issue, do not opportunistically add persistence, serialization,
-payment logic, customer models, quote models, invoices, workflow engines, generic
-transition contexts, event buses, or new modules unless the requested work requires them.
-Prefer narrow architectural evolution. Do not split the project into
-`booking-lifecycle-core`, `-persistence`, and similar modules until that work is requested.
+payment logic, customer models, workflow engines, generic transition contexts, event
+buses, new domains, or new modules unless the requested work requires them. Do not couple
+the booking lifecycle and the financial documents. Prefer narrow architectural evolution.
+Do not split the project into `commerce-domain-persistence`, `commerce-domain-jdbi`, and
+similar modules until that work is requested.
 
 ## Decision heuristics
 
@@ -394,6 +566,11 @@ These are intentionally unresolved. Do not settle them incidentally.
   explicitly, and don't bolt an `id` property onto the phase interfaces.
 - **Phase exclusivity enforcement.** One class can currently implement several phases.
   Whether to enforce exclusivity at the type level is undecided.
+- **Booking and financial coupling.** The two domains are deliberately independent.
+  Whether the library should ever offer a bridge between booking phases and financial
+  documents is undecided. Don't add one incidentally.
+- **Financial document numbering, dates, and counterparties.** Human-facing document
+  numbers, issue and due dates, and customer references are application data today.
 - **A shared `Active.cancel()`.** All active phases can be cancelled, but `cancel()` is
   declared per phase. Code holding only an `Active` must use `when` to cancel. Hoisting
   `cancel()` to `Active` would change the public API shape, so leave that for a deliberate

@@ -1,13 +1,13 @@
-package io.github.castab.bookinglifecycle
+package io.github.castab.commerce.booking.lifecycle
 
-import io.github.castab.bookinglifecycle.fixtures.CancelledBooking
-import io.github.castab.bookinglifecycle.fixtures.CancelledInquiry
-import io.github.castab.bookinglifecycle.fixtures.DeclinedQuote
-import io.github.castab.bookinglifecycle.fixtures.GuardedQuote
-import io.github.castab.bookinglifecycle.fixtures.TestBooking
-import io.github.castab.bookinglifecycle.fixtures.TestCompletedBooking
-import io.github.castab.bookinglifecycle.fixtures.TestInitialRequest
-import io.github.castab.bookinglifecycle.fixtures.TestQuote
+import io.github.castab.commerce.booking.lifecycle.fixtures.CancelledBooking
+import io.github.castab.commerce.booking.lifecycle.fixtures.CancelledInquiry
+import io.github.castab.commerce.booking.lifecycle.fixtures.DeclinedQuote
+import io.github.castab.commerce.booking.lifecycle.fixtures.GuardedQuote
+import io.github.castab.commerce.booking.lifecycle.fixtures.TestBooking
+import io.github.castab.commerce.booking.lifecycle.fixtures.TestCompletedBooking
+import io.github.castab.commerce.booking.lifecycle.fixtures.TestInitialRequest
+import io.github.castab.commerce.booking.lifecycle.fixtures.TestQuote
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldBeEmpty
