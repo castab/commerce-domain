@@ -708,7 +708,7 @@ resolved, with Byte Buddy 1.18.2, and needs no dependency override. Test depende
 are not part of the library's published runtime or API dependencies.
 
 The [CI workflow](.github/workflows/ci.yml) runs `./gradlew clean build` on Java 25
-(Temurin) for every push and pull request.
+(Temurin) for every pull request and every push to `main`.
 
 ## Releasing
 

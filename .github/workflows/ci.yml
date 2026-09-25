@@ -1,16 +1,21 @@
 name: CI
 
+# Pull requests are verified through the pull_request event; push runs only for
+# main, so a push to a branch with an open pull request does not trigger CI twice.
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 # CI only reads the repository. It has no package access and never publishes.
 permissions:
   contents: read
 
-# A newer commit on the same branch or pull request supersedes an in-progress run.
+# A newer commit to the same pull request supersedes its in-progress run. Each run
+# on main gets its own group, so every merged commit is verified to completion.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:

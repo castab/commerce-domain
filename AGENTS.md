@@ -28,7 +28,7 @@ booking lifecycle itself, it probably does not belong in the core lifecycle API.
 | `src/test/kotlin/io/github/castab/bookinglifecycle/fixtures/TestBookingModels.kt` | Test-only "application-owned" models. |
 | `build.gradle.kts`, `settings.gradle.kts`, `gradle.properties` | Single-module build with the Java 25 toolchain and the Maven publication. |
 | `gradle/libs.versions.toml` | Version catalog. |
-| `.github/workflows/ci.yml` | CI: build and test on Java 25 for every push and pull request. |
+| `.github/workflows/ci.yml` | CI: build and test on Java 25 for pull requests and pushes to `main`. |
 | `.github/workflows/publish.yml` | Publish to GitHub Packages when a GitHub Release is published. |
 | `README.md`, `AGENTS.md` | Documentation. Keep both in sync with the code. |
 
