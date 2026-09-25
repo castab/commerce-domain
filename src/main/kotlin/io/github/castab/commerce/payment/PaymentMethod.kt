@@ -5,10 +5,9 @@ package io.github.castab.commerce.payment
  * or a [RefundRecord].
  *
  * A method describes the kind of instrument, not who processed it. The processor or
- * provider (Stripe, PayPal, Square, a bank) is recorded separately, if at all, by an
- * [ExternalPaymentReference] or [ExternalRefundReference]. A card payment processed by
- * Stripe is `CARD` with provider `"stripe"`; a PayPal payment is `DIGITAL_WALLET` with
- * provider `"paypal"`. Cash and checks usually have no provider at all.
+ * provider is recorded separately, if at all, by an [ExternalPaymentReference] or
+ * [ExternalRefundReference]. A card payment remains `CARD` regardless of its provider.
+ * Cash and checks usually have no provider at all.
  *
  * The method is a descriptive fact. The library attaches no policy to it: in particular, a
  * refund's method may differ from the method of the payment it refunds.

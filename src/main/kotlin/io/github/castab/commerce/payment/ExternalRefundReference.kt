@@ -4,7 +4,7 @@ package io.github.castab.commerce.payment
  * The identity of a [RefundRecord]'s transaction in an external system, such as a payment
  * processor.
  *
- * For example `ExternalRefundReference(provider = "stripe", reference = "re_456")`. The
+ * For example `ExternalRefundReference(provider = "provider-a", reference = "refund-456")`. The
  * library never interprets either value and depends on no processor SDK.
  *
  * Uniqueness is not enforced here. If the application needs each external refund to be
@@ -13,8 +13,7 @@ package io.github.castab.commerce.payment
  * This is deliberately a different type from [ExternalPaymentReference], so that a
  * payment's transaction id cannot be recorded as a refund's by mistake.
  *
- * @property provider The external system, for example `"stripe"` or `"paypal"`. Must not
- * be blank.
+ * @property provider The external system's stable name. Must not be blank.
  * @property reference The refund's identifier in that system. Must not be blank.
  */
 data class ExternalRefundReference(

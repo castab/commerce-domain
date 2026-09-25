@@ -101,7 +101,8 @@ publishing {
                 description = "Immutable, persistence-agnostic commerce domain models and " +
                     "lifecycle APIs for Kotlin/JVM: a type-level booking lifecycle protocol, " +
                     "versioned financial documents (estimates, quotes, and invoices), and " +
-                    "payment reconciliation (payments, allocations, reversals, and refunds)."
+                    "payment reconciliation (payments, allocations, reversals, and refunds), " +
+                    "and a provider-neutral payment adapter contract."
                 url = "https://github.com/$githubRepository"
                 developers {
                     developer {

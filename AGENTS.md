@@ -20,6 +20,7 @@ APIs, shared by multiple applications. Each domain lives in its own package bene
 | Booking records | `io.github.castab.commerce.booking` | Immutable booking-to-customer association and separate operational contact and location records. |
 | Financial documents | `io.github.castab.commerce.financial` | Concrete, library-owned immutable value types (`Estimate`, `Quote`, `Invoice`) whose invariants the library enforces. |
 | Payment reconciliation | `io.github.castab.commerce.payment` | Concrete, library-owned immutable records (payments, allocations, allocation reversals, refunds, refund allocations) and reconciliation derived from records the application supplies. |
+| Payment adapter contract | `io.github.castab.commerce.payment.adapter` | Provider-neutral instructions, observations, capabilities, event receipts, and pure decisions at the external-provider boundary. |
 
 The styles are deliberate and not interchangeable. Read the rules for the domain you
 are changing: [Booking lifecycle domain](#booking-lifecycle-domain),
@@ -61,6 +62,7 @@ booking lifecycle itself, it probably does not belong in the booking lifecycle A
 | `src/main/kotlin/io/github/castab/commerce/customer/Customer.kt` | Minimal customer identity and contact value objects. |
 | `src/main/kotlin/io/github/castab/commerce/booking/` | Booking identity association, contacts, postal address, and location. |
 | `src/main/kotlin/io/github/castab/commerce/payment/` | The payment reconciliation API: `PaymentMethod.kt`, `ExternalPaymentReference.kt`, `ExternalRefundReference.kt`, `PaymentRecord.kt`, `PaymentAllocation.kt`, `PaymentAllocationReversal.kt`, `RefundRecord.kt`, `RefundAllocation.kt`, `PaymentReconciliation.kt` (payment-level reconciliation and the shared validation helpers), and `FinancialDocumentReconciliation.kt`. |
+| `src/main/kotlin/io/github/castab/commerce/payment/adapter/` | The transport-neutral payment adapter contract and pure validation of provider observations. |
 | `src/main/kotlin/io/github/castab/commerce/financial/` | The financial document API: `FinancialDocument.kt` (the sealed class, its three stages, and change application), `Version.kt`, `Money.kt`, `LineItem.kt`, `ChangeOrder.kt`, `FinancialDocumentReference.kt`, and `FinancialDocumentHistory.kt` (the history SPI and its lookup extensions). |
 | `src/test/kotlin/io/github/castab/commerce/booking/lifecycle/BookingLifecycleSpec.kt` | Kotest `FunSpec` for the booking lifecycle contract. |
 | `src/test/kotlin/io/github/castab/commerce/booking/lifecycle/fixtures/TestBookingModels.kt` | Test-only "application-owned" booking models. |
@@ -412,6 +414,36 @@ and returned, where received money was applied, and corrections to that, and der
 reconciliation from those records. It answers "what did we receive, where was it applied,
 what was corrected, what was returned, and what is the balance?". It does not answer
 "which ledger accounts were debited?".
+
+The sibling `payment.adapter` package is the deliberate provider boundary. Its
+`PreparePayment`, `PaymentPrepared`, `RequestRefund`, observations, and optional checkout
+URI do not alter a payment or refund record. `AuthorizedPayment` represents the consuming application's
+already-approved amount, including for observation-only providers. The adapter package
+may describe a provider operation without turning pending activity into a money-movement
+record. The no-checkout rule below continues to apply to core payment records and
+reconciliation; only an optional provider-hosted navigation URI belongs in this adapter
+contract.
+
+Adapter implementations authenticate provider input and translate it. This library does
+not define a transport, SDK, signature check, database, or provider-specific status.
+`PaymentProviderId` is extensible; existing `ExternalPaymentReference` and
+`ExternalRefundReference` remain the provider object references. Their provider strings
+must match `PaymentProviderId.value` when used in this contract. A
+`ProviderEventReference` instead identifies one event by `(provider, eventId)`; one
+provider object may produce many events. Receipts hold minimal metadata, never raw
+provider payloads. A consuming application must persist an accepted receipt and its
+corresponding payment/refund fact or request-status effect atomically, with uniqueness on
+the event pair, application-owned record ID, and provider object reference. The pure processing
+functions receive application-supplied records and receipts and cannot enforce storage
+uniqueness or transaction isolation themselves.
+
+Provider success must match the consuming application's authorized identity, currency, and numeric
+amount. Refund success must match the requested refund and stay within the payment's
+remaining refundable amount. Failures create no payment or refund money-movement record.
+An already completed payment or refund cannot be undone by a failure observation.
+Capability checks apply before outbound initiation or refund requests; they do not
+invalidate an authenticated success observation if the adapter's advertised capabilities
+later change. Keep this boundary provider-neutral and transport-neutral.
 
 The separation of concepts, which code, KDoc, README, and tests must all agree on:
 
