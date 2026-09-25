@@ -1,5 +1,6 @@
 package io.github.castab.commerce.financial
 
+import io.github.castab.commerce.financial.fixtures.TEST_CUSTOMER_ID
 import io.github.castab.commerce.financial.ChangeOrder.Change
 import io.github.castab.commerce.financial.fixtures.eur
 import io.github.castab.commerce.financial.fixtures.lineItem
@@ -19,7 +20,7 @@ class ChangeOrderSpec : FunSpec({
     val serviceFee = lineItem("Event service fee", quantity = null, price = usd("100"), taxAmount = usd("8"))
     val tables = lineItem("Tables", quantity = "2", price = usd("40.00"), taxAmount = usd("6.40"))
 
-    fun estimate() = FinancialDocument.Estimate.create(UUID.randomUUID(), listOf(chairs, serviceFee))
+    fun estimate() = FinancialDocument.Estimate.create(UUID.randomUUID(), listOf(chairs, serviceFee), customerId = TEST_CUSTOMER_ID)
 
     context("changes") {
 
@@ -156,7 +157,7 @@ class ChangeOrderSpec : FunSpec({
         }
 
         test("a successful change order produces exactly one next version, in the same stage") {
-            val invoiceV7 = FinancialDocument.Invoice.restore(UUID.randomUUID(), Version.of(7), listOf(chairs))
+            val invoiceV7 = FinancialDocument.Invoice.restore(UUID.randomUUID(), Version.of(7), listOf(chairs), customerId = TEST_CUSTOMER_ID)
 
             val invoiceV8 = invoiceV7.changeOrder(ChangeOrder(listOf(Change.AddLineItem(serviceFee))))
 

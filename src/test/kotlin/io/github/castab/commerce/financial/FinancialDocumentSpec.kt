@@ -1,6 +1,8 @@
 package io.github.castab.commerce.financial
 
+import io.github.castab.commerce.customer.CustomerId
 import io.github.castab.commerce.financial.ChangeOrder.Change
+import io.github.castab.commerce.financial.fixtures.TEST_CUSTOMER_ID
 import io.github.castab.commerce.financial.fixtures.USD
 import io.github.castab.commerce.financial.fixtures.eur
 import io.github.castab.commerce.financial.fixtures.lineItem
@@ -61,7 +63,7 @@ class FinancialDocumentSpec : FunSpec({
 
         test("an Estimate can start a lineage at version 1 with no previous version") {
             val id = UUID.randomUUID()
-            val estimate = FinancialDocument.Estimate.create(id = id, lineItems = items)
+            val estimate = FinancialDocument.Estimate.create(id = id, lineItems = items, customerId = TEST_CUSTOMER_ID)
 
             estimate.id shouldBe id
             estimate.version shouldBe Version.INITIAL
@@ -71,12 +73,23 @@ class FinancialDocumentSpec : FunSpec({
 
         test("a Quote can start a lineage without an Estimate") {
             val id = UUID.randomUUID()
-            val quote = FinancialDocument.Quote.create(id = id, lineItems = items)
+            val quote = FinancialDocument.Quote.create(id = id, lineItems = items, customerId = TEST_CUSTOMER_ID)
 
             quote.id shouldBe id
             quote.version shouldBe Version.INITIAL
             quote.previousVersion.shouldBeNull()
             quote.lineItems shouldContainExactly items
+        }
+
+        test("customer identity is fixed across revisions and stage transitions") {
+            val estimate = FinancialDocument.Estimate.create(UUID.randomUUID(), items, customerId = TEST_CUSTOMER_ID)
+            val revised = estimate.changeOrder(ChangeOrder(listOf(Change.ReplaceLineItem(chairs.id, chairs))))
+            val quote = revised.toQuote()
+            val invoice = quote.toInvoice()
+
+            listOf(estimate, revised, quote, invoice).map { it.customerId }.toSet() shouldBe setOf(TEST_CUSTOMER_ID)
+            val anotherCustomer = CustomerId(UUID.randomUUID())
+            FinancialDocument.Estimate.create(estimate.id, items, customerId = anotherCustomer) shouldNotBe estimate
         }
 
         test("an Invoice can start a lineage directly, as at a point of sale") {
@@ -85,7 +98,7 @@ class FinancialDocumentSpec : FunSpec({
                 lineItem("Coffee beans (bag)", quantity = "2", price = usd("14.00"), taxAmount = usd("2.24")),
             )
 
-            val invoice = FinancialDocument.Invoice.create(id = id, lineItems = purchased)
+            val invoice = FinancialDocument.Invoice.create(id = id, lineItems = purchased, customerId = TEST_CUSTOMER_ID)
 
             invoice.id shouldBe id
             invoice.version shouldBe Version.INITIAL
@@ -104,20 +117,20 @@ class FinancialDocumentSpec : FunSpec({
 
         test("a document must contain at least one line item") {
             shouldThrow<IllegalArgumentException> {
-                FinancialDocument.Estimate.create(UUID.randomUUID(), emptyList())
+                FinancialDocument.Estimate.create(UUID.randomUUID(), emptyList(), customerId = TEST_CUSTOMER_ID)
             }.message shouldContain "at least one line item"
         }
 
         test("line item ids must be unique within a document") {
             shouldThrow<IllegalArgumentException> {
-                FinancialDocument.Quote.create(UUID.randomUUID(), listOf(chairs, chairs.copy(description = "Chairs")))
+                FinancialDocument.Quote.create(UUID.randomUUID(), listOf(chairs, chairs.copy(description = "Chairs")), customerId = TEST_CUSTOMER_ID)
             }.message shouldContain "duplicate line item ids"
         }
     }
 
     context("versioning and lineage") {
 
-        val estimateV1 = FinancialDocument.Estimate.create(UUID.randomUUID(), items)
+        val estimateV1 = FinancialDocument.Estimate.create(UUID.randomUUID(), items, customerId = TEST_CUSTOMER_ID)
         val addTables = ChangeOrder(
             listOf(Change.AddLineItem(lineItem("Tables", quantity = "2", price = usd("40"), taxAmount = usd("6.40")))),
         )
@@ -142,7 +155,7 @@ class FinancialDocumentSpec : FunSpec({
         }
 
         test("toInvoice produces the next version, carrying the line items forward unchanged") {
-            val quoteV4 = FinancialDocument.Quote.create(UUID.randomUUID(), items)
+            val quoteV4 = FinancialDocument.Quote.create(UUID.randomUUID(), items, customerId = TEST_CUSTOMER_ID)
                 .changeOrder(addTables)
                 .changeOrder(ChangeOrder(listOf(Change.RemoveLineItem(serviceFee.id))))
                 .changeOrder(ChangeOrder(listOf(Change.AddLineItem(serviceFee))))
@@ -160,7 +173,7 @@ class FinancialDocumentSpec : FunSpec({
             val additionalItem = lineItem("Tables", quantity = "2", price = usd("40"), taxAmount = usd("6.40"))
             val finalAdjustment = lineItem("Overtime", quantity = null, price = usd("75"), taxAmount = usd("0"))
 
-            val estimateV1 = FinancialDocument.Estimate.create(id = UUID.randomUUID(), lineItems = items)
+            val estimateV1 = FinancialDocument.Estimate.create(id = UUID.randomUUID(), lineItems = items, customerId = TEST_CUSTOMER_ID)
             val estimateV2 = estimateV1.changeOrder(
                 ChangeOrder(
                     changes = listOf(
@@ -216,7 +229,7 @@ class FinancialDocumentSpec : FunSpec({
 
     context("lifecycle typing") {
 
-        val estimate = FinancialDocument.Estimate.create(UUID.randomUUID(), items)
+        val estimate = FinancialDocument.Estimate.create(UUID.randomUUID(), items, customerId = TEST_CUSTOMER_ID)
         val changeOrder = ChangeOrder(listOf(Change.RemoveLineItem(chairs.id)))
 
         test("each stage's changeOrder returns the same stage, and transitions move one stage forward") {
@@ -268,9 +281,9 @@ class FinancialDocumentSpec : FunSpec({
                 FinancialDocument.Quote::class.java,
                 FinancialDocument.Invoice::class.java,
             ).forEach { stage ->
-                val create = stage.getMethod("create", UUID::class.java, List::class.java)
+                val create = stage.getMethod("create", UUID::class.java, List::class.java, CustomerId::class.java)
                 Modifier.isStatic(create.modifiers) shouldBe true
-                create.parameterTypes.toList() shouldContainExactly listOf(UUID::class.java, List::class.java)
+                create.parameterTypes.toList() shouldContainExactly listOf(UUID::class.java, List::class.java, CustomerId::class.java)
             }
         }
     }
@@ -278,7 +291,7 @@ class FinancialDocumentSpec : FunSpec({
     context("immutability") {
 
         test("a change order leaves the source snapshot unchanged") {
-            val estimate = FinancialDocument.Estimate.create(UUID.randomUUID(), items)
+            val estimate = FinancialDocument.Estimate.create(UUID.randomUUID(), items, customerId = TEST_CUSTOMER_ID)
             val totalBefore = estimate.total
 
             estimate.changeOrder(ChangeOrder(listOf(Change.RemoveLineItem(chairs.id))))
@@ -290,7 +303,7 @@ class FinancialDocumentSpec : FunSpec({
         }
 
         test("toQuote leaves the source Estimate unchanged") {
-            val estimate = FinancialDocument.Estimate.create(UUID.randomUUID(), items)
+            val estimate = FinancialDocument.Estimate.create(UUID.randomUUID(), items, customerId = TEST_CUSTOMER_ID)
 
             estimate.toQuote()
 
@@ -300,7 +313,7 @@ class FinancialDocumentSpec : FunSpec({
         }
 
         test("toInvoice leaves the source Quote unchanged") {
-            val quote = FinancialDocument.Quote.create(UUID.randomUUID(), items)
+            val quote = FinancialDocument.Quote.create(UUID.randomUUID(), items, customerId = TEST_CUSTOMER_ID)
 
             quote.toInvoice()
 
@@ -311,7 +324,7 @@ class FinancialDocumentSpec : FunSpec({
 
         test("mutating the caller's source list does not mutate the snapshot") {
             val source = mutableListOf(chairs)
-            val invoice = FinancialDocument.Invoice.create(id = UUID.randomUUID(), lineItems = source)
+            val invoice = FinancialDocument.Invoice.create(id = UUID.randomUUID(), lineItems = source, customerId = TEST_CUSTOMER_ID)
 
             source += serviceFee
             source.removeAt(0)
@@ -321,7 +334,7 @@ class FinancialDocumentSpec : FunSpec({
         }
 
         test("the exposed line items cannot be mutated, even through a cast") {
-            val invoice = FinancialDocument.Invoice.create(UUID.randomUUID(), items)
+            val invoice = FinancialDocument.Invoice.create(UUID.randomUUID(), items, customerId = TEST_CUSTOMER_ID)
 
             @Suppress("UNCHECKED_CAST")
             val cast = invoice.lineItems as MutableList<LineItem>
@@ -334,7 +347,7 @@ class FinancialDocumentSpec : FunSpec({
 
         test("subtotal, tax amount, and total are derived from every line item") {
             val tables = lineItem("Tables", quantity = "2", price = usd("40.00"), taxAmount = usd("6.40"))
-            val quote = FinancialDocument.Quote.create(UUID.randomUUID(), listOf(chairs, serviceFee, tables))
+            val quote = FinancialDocument.Quote.create(UUID.randomUUID(), listOf(chairs, serviceFee, tables), customerId = TEST_CUSTOMER_ID)
 
             quote.subtotal shouldBe usd("210.00") // 30.00 + 100 + 80.00
             quote.taxAmount shouldBe usd("16.80") // 2.40 + 8 + 6.40
@@ -344,7 +357,7 @@ class FinancialDocumentSpec : FunSpec({
         }
 
         test("totals are recalculated for every successor") {
-            val quote = FinancialDocument.Quote.create(UUID.randomUUID(), items)
+            val quote = FinancialDocument.Quote.create(UUID.randomUUID(), items, customerId = TEST_CUSTOMER_ID)
             val revised = quote.changeOrder(
                 ChangeOrder(listOf(Change.ReplaceLineItem(chairs.id, chairs.copy(quantity = BigDecimal("5"), taxAmount = usd("4.00"))))),
             )
@@ -365,6 +378,7 @@ class FinancialDocumentSpec : FunSpec({
                     lineItem("Room", quantity = "2", price = eur("90"), taxAmount = eur("12.60")),
                     lineItem("City tax", quantity = null, price = eur("5"), taxAmount = eur("0")),
                 ),
+                customerId = TEST_CUSTOMER_ID,
             )
 
             invoice.total shouldBe eur("197.60")
@@ -375,6 +389,7 @@ class FinancialDocumentSpec : FunSpec({
                 FinancialDocument.Estimate.create(
                     UUID.randomUUID(),
                     listOf(chairs, lineItem("Room", quantity = null, price = eur("90"), taxAmount = eur("0"))),
+                    customerId = TEST_CUSTOMER_ID,
                 )
             }.message shouldContain "mixes currencies"
         }
@@ -383,11 +398,11 @@ class FinancialDocumentSpec : FunSpec({
     context("restoring stored snapshots") {
 
         test("restore rebuilds an equal snapshot with the derived previous version") {
-            val quoteV3 = FinancialDocument.Estimate.create(UUID.randomUUID(), items)
+            val quoteV3 = FinancialDocument.Estimate.create(UUID.randomUUID(), items, customerId = TEST_CUSTOMER_ID)
                 .changeOrder(ChangeOrder(listOf(Change.RemoveLineItem(serviceFee.id))))
                 .toQuote()
 
-            val restored = FinancialDocument.Quote.restore(quoteV3.id, Version.of(3), quoteV3.lineItems)
+            val restored = FinancialDocument.Quote.restore(quoteV3.id, Version.of(3), quoteV3.lineItems, customerId = TEST_CUSTOMER_ID)
 
             restored shouldBe quoteV3
             restored.hashCode() shouldBe quoteV3.hashCode()
@@ -396,13 +411,13 @@ class FinancialDocumentSpec : FunSpec({
         }
 
         test("restoring version 1 has no previous version") {
-            FinancialDocument.Invoice.restore(UUID.randomUUID(), Version.INITIAL, items).previousVersion.shouldBeNull()
-            FinancialDocument.Estimate.restore(UUID.randomUUID(), Version.of(37), items).previousVersion shouldBe Version.of(36)
+            FinancialDocument.Invoice.restore(UUID.randomUUID(), Version.INITIAL, items, customerId = TEST_CUSTOMER_ID).previousVersion.shouldBeNull()
+            FinancialDocument.Estimate.restore(UUID.randomUUID(), Version.of(37), items, customerId = TEST_CUSTOMER_ID).previousVersion shouldBe Version.of(36)
         }
 
         test("restored snapshots are validated like any other") {
             shouldThrow<IllegalArgumentException> {
-                FinancialDocument.Invoice.restore(UUID.randomUUID(), Version.of(4), emptyList())
+                FinancialDocument.Invoice.restore(UUID.randomUUID(), Version.of(4), emptyList(), customerId = TEST_CUSTOMER_ID)
             }
         }
     }
@@ -411,19 +426,19 @@ class FinancialDocumentSpec : FunSpec({
 
         test("snapshots are equal only with the same stage, id, version, and line items") {
             val id = UUID.randomUUID()
-            val estimate = FinancialDocument.Estimate.create(id, items)
+            val estimate = FinancialDocument.Estimate.create(id, items, customerId = TEST_CUSTOMER_ID)
 
-            estimate shouldBe FinancialDocument.Estimate.create(id, items)
-            estimate shouldNotBe FinancialDocument.Quote.create(id, items)
-            estimate shouldNotBe FinancialDocument.Estimate.create(UUID.randomUUID(), items)
-            estimate shouldNotBe FinancialDocument.Estimate.restore(id, Version.of(2), items)
-            estimate shouldNotBe FinancialDocument.Estimate.create(id, listOf(chairs))
+            estimate shouldBe FinancialDocument.Estimate.create(id, items, customerId = TEST_CUSTOMER_ID)
+            estimate shouldNotBe FinancialDocument.Quote.create(id, items, customerId = TEST_CUSTOMER_ID)
+            estimate shouldNotBe FinancialDocument.Estimate.create(UUID.randomUUID(), items, customerId = TEST_CUSTOMER_ID)
+            estimate shouldNotBe FinancialDocument.Estimate.restore(id, Version.of(2), items, customerId = TEST_CUSTOMER_ID)
+            estimate shouldNotBe FinancialDocument.Estimate.create(id, listOf(chairs), customerId = TEST_CUSTOMER_ID)
         }
 
         test("toString names the stage and version") {
-            val invoice = FinancialDocument.Invoice.create(UUID.randomUUID(), items)
+            val invoice = FinancialDocument.Invoice.create(UUID.randomUUID(), items, customerId = TEST_CUSTOMER_ID)
 
-            invoice.toString() shouldStartWith "Invoice(id=${invoice.id}, version=v1, previousVersion=null"
+            invoice.toString() shouldStartWith "Invoice(id=${invoice.id}, customerId=${invoice.customerId}, version=v1, previousVersion=null"
         }
     }
 })

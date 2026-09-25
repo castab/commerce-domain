@@ -1,5 +1,6 @@
 package io.github.castab.commerce.payment.fixtures
 
+import io.github.castab.commerce.financial.fixtures.TEST_CUSTOMER_ID
 import io.github.castab.commerce.financial.ChangeOrder
 import io.github.castab.commerce.financial.FinancialDocument
 import io.github.castab.commerce.financial.LineItem
@@ -35,13 +36,13 @@ fun flatLine(total: Money, description: String = "Services", id: UUID = UUID.ran
     lineItem(description, quantity = null, price = total, taxAmount = Money.zero(total.currency), id = id)
 
 fun estimateTotalling(total: Money, id: UUID = UUID.randomUUID()): FinancialDocument.Estimate =
-    FinancialDocument.Estimate.create(id, listOf(flatLine(total)))
+    FinancialDocument.Estimate.create(id, listOf(flatLine(total)), customerId = TEST_CUSTOMER_ID)
 
 fun quoteTotalling(total: Money, id: UUID = UUID.randomUUID()): FinancialDocument.Quote =
-    FinancialDocument.Quote.create(id, listOf(flatLine(total)))
+    FinancialDocument.Quote.create(id, listOf(flatLine(total)), customerId = TEST_CUSTOMER_ID)
 
 fun invoiceTotalling(total: Money, id: UUID = UUID.randomUUID()): FinancialDocument.Invoice =
-    FinancialDocument.Invoice.create(id, listOf(flatLine(total)))
+    FinancialDocument.Invoice.create(id, listOf(flatLine(total)), customerId = TEST_CUSTOMER_ID)
 
 /** A change order that replaces every line of [document] with one flat line of [total]. */
 fun retotal(document: FinancialDocument, total: Money): ChangeOrder =
