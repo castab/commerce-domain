@@ -1,0 +1,51 @@
+name: CI
+
+# Pull requests are verified through the pull_request event; push runs only for
+# main, so a push to a branch with an open pull request does not trigger CI twice.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# CI only reads the repository. It has no package access and never publishes.
+permissions:
+  contents: read
+
+# A newer commit to the same pull request supersedes its in-progress run. Each run
+# on main gets its own group, so every merged commit is verified to completion.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test (Java 25)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Java 25 is a hard requirement of this library; the Gradle toolchain
+      # resolves to this JDK (auto-download is disabled).
+      - name: Set up Java 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      # Caches Gradle state and validates the checked-in Gradle Wrapper.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Show Gradle and JVM versions
+        run: ./gradlew --version
+
+      # --no-build-cache ensures the Kotest suite (including the MockK test)
+      # actually executes rather than being restored from a cached result.
+      - name: Build and test
+        run: ./gradlew clean build --no-build-cache
