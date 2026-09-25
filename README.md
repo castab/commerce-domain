@@ -13,7 +13,8 @@ multiple applications can share.
 io.github.castab:commerce-domain:<version>
 ```
 
-It currently contains customer identity, booking records and lifecycle, financial documents, and payment reconciliation:
+It currently contains customer identity, booking records and lifecycle, financial
+documents, payment reconciliation, and principal authorization:
 
 | Domain | Package | What it provides |
 |---|---|---|
@@ -21,6 +22,7 @@ It currently contains customer identity, booking records and lifecycle, financia
 | [Customer and booking records](#customer-and-booking-records) | `io.github.castab.commerce.customer`, `io.github.castab.commerce.booking` | Minimal customer identity, a booking-to-customer association, and independently held contacts and locations. |
 | [Financial documents](#financial-documents) | `io.github.castab.commerce.financial` | Immutable, versioned commercial documents (`Estimate → Quote → Invoice`) with line items, change orders, derived totals, and persistence-agnostic history lookup. |
 | [Payment reconciliation](#payment-reconciliation) | `io.github.castab.commerce.payment` | Immutable payment records, payment allocations, allocation reversals, refund records, and refund allocations, with derived payment and document reconciliation. |
+| [Principal authorization](#principal-authorization) | `io.github.castab.commerce.staff` | Human and service identities, extensible roles and permissions, resolver ports, and additive role-based authorization. |
 
 The booking lifecycle protocol remains independent of financial documents. Booking
 records and financial documents both reference `Customer.Id`. The payment domain references
@@ -40,6 +42,7 @@ is `kotlin-stdlib`.
 - [Customer and booking records](#customer-and-booking-records)
 - [Financial documents](#financial-documents)
 - [Payment reconciliation](#payment-reconciliation)
+- [Principal authorization](#principal-authorization)
 - [Using both domains together](#using-both-domains-together)
 - [What this library is not](#what-this-library-is-not)
 - [Requirements](#requirements)
@@ -1742,6 +1745,105 @@ The records are regular classes, not data classes: there is no `copy()` to invit
 a historical fact. From Java, `create`, `restore`, and `reconcile` are static methods, with
 overloads for the optional parameters.
 
+## Principal authorization
+
+Package `io.github.castab.commerce.staff` distinguishes a human staff `User` from a
+non-human `ServiceIdentity`, such as an adapter or worker. Both implement `Principal`:
+an entity with an ID, `ACTIVE` or `DISABLED` status, and role assignments. `User` keeps
+human fields such as username and names; `ServiceIdentity` has a service name. Their
+UUID-backed `UserId` and `ServiceId` are distinct types implementing `PrincipalId`.
+Neither model contains credentials or sessions. The existing `UserStatus` name remains
+as a Kotlin alias for the shared `PrincipalStatus`.
+
+```text
+authenticate caller → PrincipalId → resolve Principal → assigned RoleKey
+                  → RoleDefinition → granted PermissionKey → authorize operation
+```
+
+`RoleKey` and `PermissionKey` are validated, open-ended strings, not enums. Roles are
+shared by humans and services. `CommerceRoles` (`Administrator`, `Manager`,
+`Supervisor`, `Employee`) provides conventional keys without built-in grants.
+`CommercePermissions` provides keys for booking read/modify, financial-document
+read/create, payment/refund recording, and user read/manage and role assignment.
+Applications define the actual role bundles and may add their own, for example:
+
+```kotlin
+import io.github.castab.commerce.staff.*
+import java.util.UUID
+
+val EmailRespond = PermissionKey("fionas.email.respond")
+val CustomerService = RoleDefinition(
+    key = RoleKey("fionas.customer-service"),
+    displayName = "Customer Service",
+    description = "Handles customer communication",
+    permissions = setOf(EmailRespond),
+)
+
+val StripeAdapterRole = RoleDefinition(
+    key = RoleKey("commerce.payment-reporter"),
+    displayName = "Payment Reporter",
+    description = "Reports externally processed payments and refunds",
+    permissions = setOf(
+        CommercePermissions.PaymentRecord,
+        CommercePermissions.RefundRecord,
+    ),
+)
+val stripeAdapter = ServiceIdentity(
+    id = ServiceId(UUID.randomUUID()),
+    name = "stripe-adapter",
+    status = PrincipalStatus.ACTIVE,
+    roles = setOf(RoleAssignment(StripeAdapterRole.key)),
+)
+
+val principalResolver = PrincipalResolver { id ->
+    when (id) {
+        is UserId -> usersById[id]
+        is ServiceId -> servicesById[id]
+    }
+}
+val roleResolver = RoleResolver { key -> rolesByKey[key] }
+val permissionResolver = RoleBasedPermissionResolver(principalResolver, roleResolver)
+
+stripeAdapter.id.can(CommercePermissions.PaymentRecord, permissionResolver) // true
+stripeAdapter.id.can(CommercePermissions.UserManage, permissionResolver)    // false
+userId.can(EmailRespond, permissionResolver)                                // same API for a human
+```
+
+Here `usersById`, `servicesById`, and `rolesByKey` represent application-owned sources,
+with `rolesByKey` containing the example definitions. The resolver ports specify no
+database, protocol, or cache. `UserResolver` remains available for human-specific
+lookups; authorization uses `PrincipalResolver` and `PermissionResolver`, both of which
+operate on `PrincipalId`. A business operation checks a `PermissionKey`, not a role or
+principal type: any number of roles can grant the same capability to humans or services.
+
+`RoleBasedPermissionResolver` unions the permissions of all resolved assigned roles.
+It grants nothing for an unknown or disabled principal, or when a resolver returns a
+different identity. It skips missing role definitions and definitions whose key does
+not match the requested role; other valid roles can still grant permissions. An absent
+permission is denied. There is no trusted-service bypass, explicit denial, or role
+precedence. `PrincipalId.can(permission, permissionResolver)` keeps the dependency
+explicit; there is no global authorization state.
+
+For an HTTP application, the usual boundary is:
+
+```text
+browser request → validate session credential ─→ UserId ────┐
+service request → validate service credential ─→ ServiceId ─┤
+                                                   PrincipalId
+                                                       ↓
+                                     check required permission
+                                                       ↓
+                                          allow or deny operation
+```
+
+The application may respond `401` when authentication fails and `403` when an
+authenticated principal lacks permission. Expired, revoked, or otherwise invalid
+credentials never reach commerce authorization. The library neither validates
+credentials nor returns HTTP status codes. Role scoping and explicit deny policies
+are outside this version. A future audit model may use `PrincipalId` for `recordedBy`
+or `performedBy`, preserving the distinction between `UserId` and `ServiceId`;
+existing commerce records are unchanged.
+
 ## Using both domains together
 
 The booking lifecycle and financial document stages are independent and compose in
@@ -1795,6 +1897,7 @@ It is not:
 - a booking workflow engine or repository;
 - a pricing, tax-calculation, or quote engine (your application prices lines and computes tax);
 - a payment processor integration, a checkout, or a card-data store;
+- an authentication or session system;
 - an accounting ledger (no accounts, journals, debits, or credits);
 - a serialization format or a framework integration;
 - a state enum wrapper.
@@ -1895,6 +1998,9 @@ What exists today:
   `PaymentAllocationReversal`, `RefundRecord`, `RefundAllocation`, `PaymentMethod`, the
   external reference types, and the derived `PaymentReconciliation` and
   `FinancialDocumentReconciliation`;
+- the staff domain: human `User` and non-human `ServiceIdentity` principals, distinct
+  UUID-backed IDs, extensible roles and permissions, resolver ports,
+  `RoleBasedPermissionResolver`, and the `PrincipalId.can` extension;
 - KDoc on every public declaration;
 - Kotest suites for every domain, using real fixtures and value objects, with MockK for
   mockable collaborators;
