@@ -379,13 +379,13 @@ fun describe(phase: BookingLifecycle): String =
 
 Below is a complete application-owned chain for a catering business. It lives in the
 application's own package. Every field and every type other than `BookingLifecycle`
-belongs to the application. The library defines `BookingId` for a stable booking
+belongs to the application. The library defines `Booking.Id` for a stable booking
 reference; the application carries it through its own phase types.
 
 ```kotlin
 package com.example.catering
 
-import io.github.castab.commerce.booking.BookingId
+import io.github.castab.commerce.booking.Booking
 import io.github.castab.commerce.booking.lifecycle.BookingLifecycle
 import io.github.castab.commerce.customer.Customer
 import java.math.BigDecimal
@@ -395,7 +395,7 @@ import java.util.UUID
 data class MenuSelection(val item: String, val servings: Int)
 
 data class CateringInitialRequest(
-    val bookingId: BookingId,
+    val bookingId: Booking.Id,
     val customerId: Customer.Id,
     val eventDate: LocalDate,
     val selections: List<MenuSelection>,
@@ -410,7 +410,7 @@ data class CateringInitialRequest(
 }
 
 data class CateringQuote(
-    val bookingId: BookingId,
+    val bookingId: Booking.Id,
     val customerId: Customer.Id,
     val eventDate: LocalDate,
     val selections: List<MenuSelection>,
@@ -430,7 +430,7 @@ data class CateringQuote(
 }
 
 data class CateringBooking(
-    val bookingId: BookingId,
+    val bookingId: Booking.Id,
     val customerId: Customer.Id,
     val eventDate: LocalDate,
     val selections: List<MenuSelection>,
@@ -454,25 +454,25 @@ data class CateringBooking(
 }
 
 data class CompletedCateringBooking(
-    val bookingId: BookingId,
+    val bookingId: Booking.Id,
     val customerId: Customer.Id,
     val eventDate: LocalDate,
     val finalTotal: BigDecimal,
 ) : BookingLifecycle.Terminal.Completed
 
 data class CancelledCateringInquiry(
-    val bookingId: BookingId,
+    val bookingId: Booking.Id,
     val customerId: Customer.Id,
 ) : BookingLifecycle.Terminal.Cancelled
 
 data class DeclinedCateringQuote(
-    val bookingId: BookingId,
+    val bookingId: Booking.Id,
     val customerId: Customer.Id,
     val quotedTotal: BigDecimal,
 ) : BookingLifecycle.Terminal.Cancelled
 
 data class CancelledCateringBooking(
-    val bookingId: BookingId,
+    val bookingId: Booking.Id,
     val customerId: Customer.Id,
     val eventDate: LocalDate,
 ) : BookingLifecycle.Terminal.Cancelled
@@ -482,7 +482,7 @@ Walking the canonical path:
 
 ```kotlin
 val request = CateringInitialRequest(
-    bookingId = BookingId(UUID.randomUUID()),
+    bookingId = Booking.Id(UUID.randomUUID()),
     customerId = Customer.Id(UUID.randomUUID()),
     eventDate = LocalDate.of(2026, 11, 14),
     selections = listOf(MenuSelection("Tamales", servings = 80)),
@@ -625,7 +625,7 @@ The booking lifecycle does not own, define, or constrain any of the following:
 
 - customer fields or customer management (the separate customer package defines minimal identity)
 - staff identity or actors
-- carrying `BookingId` through application-owned phase models
+- carrying `Booking.Id` through application-owned phase models
 - selections, line items, or estimates
 - quote contents and quote versions
 - invoice details and invoice versions
@@ -698,7 +698,7 @@ lifecycle. Money actually returned can be recorded with the
 than bookings; the application links the two. A minimal application-owned sketch:
 
 ```kotlin
-data class Refund(val bookingId: BookingId, val amount: BigDecimal, val reason: String)
+data class Refund(val bookingId: Booking.Id, val amount: BigDecimal, val reason: String)
 
 val refund = Refund(completed.bookingId, BigDecimal("150.00"), reason = "late delivery")
 // `completed` is still a BookingLifecycle.Terminal.Completed
@@ -737,14 +737,15 @@ UUID-backed value. It has no address, postal code, booking history, or payment i
 `Booking` identifies the service arrangement and references that customer by ID. The
 application still owns the concrete lifecycle phase models and business transitions.
 
-Each `BookingContact` has its own ID and booking ID. `CustomerContact` references an
-existing `Customer.Id` and copies no name, email, or phone. `ExternalContact` describes a
-different person for this booking without creating a customer. It requires a name and at
+Each `BookingContact` has its own `BookingContact.Id` and `Booking.Id`.
+`CustomerContact` references an existing `Customer.Id` and copies no name, email, or
+phone. `ExternalContact` describes a different person for this booking without creating
+a customer. It requires a name and at
 least one of email or phone. Several contacts can share a booking ID.
 
-`BookingLocation` has its own ID, booking ID, and `PostalAddress`. Region and postal code
-are optional for places that do not use them; when present, they belong to that booking's
-location. Two bookings of one customer can therefore have different
+`BookingLocation` has its own `BookingLocation.Id`, `Booking.Id`, and `PostalAddress`.
+Region and postal code are optional for places that do not use them; when present, they
+belong to that booking's location. Two bookings of one customer can therefore have different
 addresses. An application may keep at most one active location per booking; the library
 has no repository or global registry to enforce collection-wide cardinality.
 
@@ -1749,13 +1750,13 @@ different concepts: one says where the booking stands, and the other is the pric
 An application can let its phase models carry documents:
 
 ```kotlin
-import io.github.castab.commerce.booking.BookingId
+import io.github.castab.commerce.booking.Booking
 import io.github.castab.commerce.booking.lifecycle.BookingLifecycle
 import io.github.castab.commerce.financial.ChangeOrder
 import io.github.castab.commerce.financial.FinancialDocument
 
 data class CateringQuote(
-    val bookingId: BookingId,
+    val bookingId: Booking.Id,
     val quote: FinancialDocument.Quote,
 ) : BookingLifecycle.Active.Quote {
 
@@ -1768,7 +1769,7 @@ data class CateringQuote(
 }
 
 data class CateringBooking(
-    val bookingId: BookingId,
+    val bookingId: Booking.Id,
     val invoice: FinancialDocument.Invoice,
 ) : BookingLifecycle.Active.Booked {
 

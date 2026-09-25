@@ -13,8 +13,16 @@ class BookingModelsSpec :
     FunSpec({
         val customerId = Customer.Id(UUID.randomUUID())
         val customer = Customer(customerId, CustomerName("Bob Smith"), EmailAddress("bob@example.com"), PhoneNumber("559-555-1111"))
-        val first = Booking(BookingId(UUID.randomUUID()), customer.id)
-        val second = Booking(BookingId(UUID.randomUUID()), customer.id)
+        val first = Booking(Booking.Id(UUID.randomUUID()), customer.id)
+        val second = Booking(Booking.Id(UUID.randomUUID()), customer.id)
+
+        test("booking record IDs are scoped to their owning models") {
+            Booking::class.java.getDeclaredField("id").type shouldBe Booking.Id::class.java
+            BookingContact.CustomerContact::class.java.getDeclaredField("id").type shouldBe BookingContact.Id::class.java
+            BookingContact.CustomerContact::class.java.getDeclaredField("bookingId").type shouldBe Booking.Id::class.java
+            BookingLocation::class.java.getDeclaredField("id").type shouldBe BookingLocation.Id::class.java
+            BookingLocation::class.java.getDeclaredField("bookingId").type shouldBe Booking.Id::class.java
+        }
 
         test("separate bookings reference one customer by identity without embedding it") {
             first.customerId shouldBe second.customerId
@@ -27,7 +35,7 @@ class BookingModelsSpec :
         }
 
         test("customer-backed contact references the customer without duplicating their details") {
-            val contact = BookingContact.CustomerContact(BookingContactId(UUID.randomUUID()), first.id, customer.id)
+            val contact = BookingContact.CustomerContact(BookingContact.Id(UUID.randomUUID()), first.id, customer.id)
             contact.bookingId shouldBe first.id
             contact.customerId shouldBe customer.id
             BookingContact.CustomerContact::class.java.declaredFields
@@ -38,17 +46,17 @@ class BookingModelsSpec :
         }
 
         test("multiple independently identified contacts may serve one booking") {
-            val known = BookingContact.CustomerContact(BookingContactId(UUID.randomUUID()), first.id, customer.id)
+            val known = BookingContact.CustomerContact(BookingContact.Id(UUID.randomUUID()), first.id, customer.id)
             val other =
                 BookingContact.ExternalContact(
-                    BookingContactId(UUID.randomUUID()),
+                    BookingContact.Id(UUID.randomUUID()),
                     first.id,
                     CustomerName("Alice Smith"),
                     email = EmailAddress("alice@example.com"),
                 )
             val dayOf =
                 BookingContact.ExternalContact(
-                    BookingContactId(UUID.randomUUID()),
+                    BookingContact.Id(UUID.randomUUID()),
                     first.id,
                     CustomerName("Venue representative"),
                     phoneNumber = PhoneNumber("+1 559 555 2222"),
@@ -67,14 +75,14 @@ class BookingModelsSpec :
 
         test("external contact requires a name and at least one contact method") {
             shouldThrow<IllegalArgumentException> {
-                BookingContact.ExternalContact(BookingContactId(UUID.randomUUID()), first.id, CustomerName("Alice"))
+                BookingContact.ExternalContact(BookingContact.Id(UUID.randomUUID()), first.id, CustomerName("Alice"))
             }
             shouldThrow<IllegalArgumentException> { CustomerName(" ") }
             shouldThrow<IllegalArgumentException> { EmailAddress(" ") }
             shouldThrow<IllegalArgumentException> { PhoneNumber(" ") }
             val valid =
                 BookingContact.ExternalContact(
-                    BookingContactId(UUID.randomUUID()),
+                    BookingContact.Id(UUID.randomUUID()),
                     first.id,
                     CustomerName("Alice"),
                     phoneNumber = PhoneNumber("555-2222"),
@@ -85,13 +93,13 @@ class BookingModelsSpec :
         test("locations belong to bookings, and the same customer may have different addresses") {
             val firstLocation =
                 BookingLocation(
-                    BookingLocationId(UUID.randomUUID()),
+                    BookingLocation.Id(UUID.randomUUID()),
                     first.id,
                     PostalAddress("123 Main St", "Suite 2", "Fresno", "CA", "93721", "US"),
                 )
             val secondLocation =
                 BookingLocation(
-                    BookingLocationId(UUID.randomUUID()),
+                    BookingLocation.Id(UUID.randomUUID()),
                     second.id,
                     PostalAddress("5 High Street", city = "London", region = "Greater London", postalCode = "SW1A 1AA", countryCode = "GB"),
                 )
@@ -112,11 +120,11 @@ class BookingModelsSpec :
             shouldThrow<IllegalArgumentException> { PostalAddress("123 Main", city = "Fresno", region = "CA", postalCode = " ") }
             PostalAddress("No Postcode Road", city = "Example City").postalCode shouldBe null
             val contacts =
-                mutableListOf<BookingContact>(BookingContact.CustomerContact(BookingContactId(UUID.randomUUID()), first.id, customer.id))
+                mutableListOf<BookingContact>(BookingContact.CustomerContact(BookingContact.Id(UUID.randomUUID()), first.id, customer.id))
             val locations =
                 mutableListOf(
                     BookingLocation(
-                        BookingLocationId(UUID.randomUUID()),
+                        BookingLocation.Id(UUID.randomUUID()),
                         first.id,
                         PostalAddress("123 Main", city = "Fresno", region = "CA", postalCode = "93721"),
                     ),

@@ -177,7 +177,7 @@ them.
 
 Booking lifecycle interfaces declare transitions only, with no properties and no data.
 `Booking` in the sibling `booking` package is a separate immutable association between
-`BookingId` and `Customer.Id`. It is not a lifecycle phase or a container for operational PII.
+`Booking.Id` and `Customer.Id`. It is not a lifecycle phase or a container for operational PII.
 
 Avoid introducing types or fields such as these into the booking lifecycle:
 
@@ -191,7 +191,7 @@ than adopter data. `Customer` now exists in the customer package, `Booking` in t
 package, `Money` and `Invoice` in the financial package, and payments
 and refunds in the payment package. That does not make them booking lifecycle concepts:
 never reference customer, booking, financial, or payment types from `BookingLifecycle`.
-Applications may carry the library's `BookingId` through their own phase models.
+Applications may carry the library's `Booking.Id` through their own phase models.
 
 ## New lifecycle phase checklist
 
@@ -266,7 +266,7 @@ to `InitialRequest`, or similar. An illegal edge must have no method at all.
 
 `Customer` contains exactly `id`, `name`, `email`, and `phoneNumber`. It holds no
 address, booking history, payment details, or operational contact information. New
-`Customer.Id`, `BookingId`, `BookingContactId`, and `BookingLocationId` types wrap UUIDs
+`Customer.Id`, `Booking.Id`, `BookingContact.Id`, and `BookingLocation.Id` types wrap UUIDs
 to keep these peer references distinct. Existing financial/payment record IDs stay raw
 UUIDs; this focused exception does not require a repository-wide identifier migration.
 
@@ -756,7 +756,7 @@ or in a future, separate module.
 
 These are intentionally unresolved. Do not settle them incidentally.
 
-- **Booking identity through phases.** `BookingId` now identifies a booking and `Booking`
+- **Booking identity through phases.** `Booking.Id` now identifies a booking and `Booking`
   links it to `Customer.Id`. The protocol does not require phase models to carry that ID.
   Applications decide how to preserve it through transitions; do not bolt an `id`
   property onto the phase interfaces.
