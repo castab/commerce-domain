@@ -26,11 +26,15 @@ booking lifecycle itself, it probably does not belong in the core lifecycle API.
 | `src/main/kotlin/io/github/castab/bookinglifecycle/BookingLifecycle.kt` | The entire public API. |
 | `src/test/kotlin/io/github/castab/bookinglifecycle/BookingLifecycleSpec.kt` | Kotest `FunSpec` for the lifecycle contract. |
 | `src/test/kotlin/io/github/castab/bookinglifecycle/fixtures/TestBookingModels.kt` | Test-only "application-owned" models. |
-| `build.gradle.kts`, `settings.gradle.kts`, `gradle.properties` | Single-module build with the Java 25 toolchain. |
+| `build.gradle.kts`, `settings.gradle.kts`, `gradle.properties` | Single-module build with the Java 25 toolchain and the Maven publication. |
 | `gradle/libs.versions.toml` | Version catalog. |
+| `.github/workflows/ci.yml` | CI: build and test on Java 25 for every push and pull request. |
+| `.github/workflows/publish.yml` | Publish to GitHub Packages when a GitHub Release is published. |
 | `README.md`, `AGENTS.md` | Documentation. Keep both in sync with the code. |
 
-Package: `io.github.castab.bookinglifecycle`. Maven coordinates: `io.github.castab:booking-lifecycle`.
+Package: `io.github.castab.bookinglifecycle`. Maven coordinates:
+`io.github.castab:booking-lifecycle`, published to
+`https://maven.pkg.github.com/castab/booking-lifecycle`.
 
 ## Architectural invariants
 
@@ -204,8 +208,8 @@ runtime or API dependencies. Check with:
 ./gradlew dependencies --configuration runtimeClasspath
 ```
 
-No preview, EAP, milestone, RC, snapshot, or nightly dependencies. Do not add Maven
-publishing unless it is requested.
+No preview, EAP, milestone, RC, snapshot, or nightly dependencies. Never add a runtime
+dependency just to support CI or publishing.
 
 ## Toolchain rules
 
@@ -223,6 +227,45 @@ publishing unless it is requested.
   **test-scoped** constraint for `net.bytebuddy:byte-buddy` and
   `net.bytebuddy:byte-buddy-agent`, with a comment in the build file explaining why. Do not
   replace MockK and do not lower Java.
+
+## CI and publication
+
+- **Java 25 in CI.** Both workflows use Temurin 25 through `actions/setup-java`. Do not
+  add a matrix with older JDKs or lower the version to get CI green.
+- **The Gradle Wrapper is authoritative.** Workflows run `./gradlew`, and
+  `gradle/actions/setup-gradle` provides caching and wrapper validation. Do not install
+  another Gradle, and do not add competing cache steps.
+- **CI must pass before publication.** `ci.yml` runs `./gradlew clean build
+  --no-build-cache` with `contents: read` only. It can never publish. `publish.yml` runs
+  the same verification, and publishes only if it succeeds. Never add
+  `continue-on-error`, skip tests, or reorder these steps.
+- **Releases go to GitHub Packages, triggered only by a published GitHub Release.** Do not
+  publish from pushes, pull requests, or schedules. `publish.yml` is the only workflow
+  with `packages: write`. Do not grant `contents: write`, `id-token: write`, or other
+  scopes unless a new requirement truly needs them.
+- **Maven versions derive from release tags.** A tag `vX.Y.Z[-prerelease]` becomes Maven
+  version `X.Y.Z[-prerelease]`, passed to Gradle as the `version` project property
+  (`ORG_GRADLE_PROJECT_version`). The build script's default, `0.0.0-SNAPSHOT`, is for
+  local builds. Never write release versions into `build.gradle.kts`,
+  `gradle.properties`, or the workflow files.
+- **Published versions are immutable.** Never design for overwriting a released version.
+  A fix is released as the next version.
+- **Credentials are never committed.** Publishing uses the workflow's `GITHUB_TOKEN`,
+  passed as the `GitHubPackagesUsername` and `GitHubPackagesPassword` Gradle properties
+  through `credentials(PasswordCredentials::class)`. Local `build`, `test`, and
+  `publishToMavenLocal` must keep working without any GitHub credentials. Never put
+  tokens in repository files. Consumers keep theirs in `~/.gradle/gradle.properties`.
+- **Published artifacts:** the main jar, a sources jar, a javadoc jar (empty for now,
+  because the sources are Kotlin-only and Dokka is not used), the POM, and Gradle module
+  metadata. The POM has no `<licenses>` section, because the repository has no license
+  yet. Do not invent one.
+- **Test-only dependencies must not leak into the published library.** Check the
+  generated POM or `runtimeClasspath` after dependency changes.
+- **Routine feature work should not modify publication behavior.** Keep
+  `publishing { }` and the workflows unchanged unless the task is about them.
+- **Maven Central, if added later, is an additional publishing target.** Add a second
+  repository or workflow step. Do not replace or break GitHub Packages for existing
+  consumers, and do not add PGP signing for GitHub Packages alone.
 
 ## Kotlin design rules
 

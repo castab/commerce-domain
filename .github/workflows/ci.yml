@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# CI only reads the repository. It has no package access and never publishes.
+permissions:
+  contents: read
+
+# A newer commit on the same branch or pull request supersedes an in-progress run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test (Java 25)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Java 25 is a hard requirement of this library; the Gradle toolchain
+      # resolves to this JDK (auto-download is disabled).
+      - name: Set up Java 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      # Caches Gradle state and validates the checked-in Gradle Wrapper.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Show Gradle and JVM versions
+        run: ./gradlew --version
+
+      # --no-build-cache ensures the Kotest suite (including the MockK test)
+      # actually executes rather than being restored from a cached result.
+      - name: Build and test
+        run: ./gradlew clean build --no-build-cache

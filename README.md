@@ -1,5 +1,7 @@
 # booking-lifecycle
 
+[![CI](https://github.com/castab/booking-lifecycle/actions/workflows/ci.yml/badge.svg)](https://github.com/castab/booking-lifecycle/actions/workflows/ci.yml)
+
 A small Kotlin/JVM library for expressing a booking lifecycle directly through
 application-owned domain types.
 
@@ -32,8 +34,9 @@ application defines whether, when, and how that transition occurs.**
 - [Terminal outcomes](#terminal-outcomes)
 - [What this library is not](#what-this-library-is-not)
 - [Requirements](#requirements)
+- [Installation](#installation)
 - [Building and testing](#building-and-testing)
-- [Using it from another build](#using-it-from-another-build)
+- [Releasing](#releasing)
 - [Current scope](#current-scope)
 - [Future direction](#future-direction)
 
@@ -597,32 +600,74 @@ The Java 25 requirement is intentional. Do not expect a build targeting 17 or 21
 Versions are declared in [`gradle/libs.versions.toml`](gradle/libs.versions.toml) and
 [`build.gradle.kts`](build.gradle.kts).
 
-## Building and testing
+## Installation
 
-```bash
-./gradlew clean test
+Releases are published to **GitHub Packages** as a Maven artifact:
+
+| | |
+|---|---|
+| Coordinates | `io.github.castab:booking-lifecycle:<version>` |
+| Repository | `https://maven.pkg.github.com/castab/booking-lifecycle` |
+| Versions | [GitHub Releases](https://github.com/castab/booking-lifecycle/releases). A release tagged `v0.1.0` is published as version `0.1.0`. |
+
+A consuming build needs **both** the repository declaration and the dependency.
+`mavenCentral()` alone is not enough.
+
+```kotlin
+// build.gradle.kts (or dependencyResolutionManagement in settings.gradle.kts)
+repositories {
+    mavenCentral()
+    maven {
+        url = uri("https://maven.pkg.github.com/castab/booking-lifecycle")
+        credentials {
+            username = providers.gradleProperty("gpr.user").orNull ?: System.getenv("GITHUB_ACTOR")
+            password = providers.gradleProperty("gpr.key").orNull ?: System.getenv("GITHUB_TOKEN")
+        }
+        // Only ask GitHub Packages for this library's group.
+        content {
+            includeGroup("io.github.castab")
+        }
+    }
+}
+
+dependencies {
+    implementation("io.github.castab:booking-lifecycle:0.1.0")
+}
 ```
 
-On Windows:
+The consuming project must also build and run on Java 25 (for example,
+`kotlin { jvmToolchain(25) }`).
 
-```powershell
-.\gradlew.bat clean test
-```
+### Authentication is required, even for public packages
 
-The build cache is enabled. To make the tests run again rather than reuse cached results,
-add `--no-build-cache` (or run `./gradlew test --rerun`).
+GitHub Packages' Maven registry requires authentication to **download** packages,
+including public ones.
 
-Tests are written with [Kotest](https://kotest.io) 6.2.3 (`FunSpec`, Kotest assertions) on
-the JUnit Platform. They use concrete test-owned fixtures for lifecycle behavior and
-[MockK](https://mockk.io) 1.14.11 for one mocking test. MockK works on Java 25 as
-resolved, with Byte Buddy 1.18.2, and needs no dependency override. Test dependencies
-are not part of the library's runtime or API dependencies.
+- **On your machine:** create a GitHub personal access token (classic) with the
+  `read:packages` scope, and put it in your **user-level** Gradle properties file,
+  `~/.gradle/gradle.properties`:
 
-## Using it from another build
+  ```properties
+  gpr.user=<your-github-username>
+  gpr.key=<your-personal-access-token>
+  ```
 
-The library is not published to any repository yet, and no publishing is configured.
-You can consume it today with a Gradle
-[composite build](https://docs.gradle.org/current/userguide/composite_builds.html):
+  These credentials belong to you, not to any project. Never put tokens in a
+  repository's `build.gradle.kts`, `settings.gradle.kts`, or `gradle.properties`, and
+  never commit them.
+
+- **In GitHub Actions:** provide `GITHUB_ACTOR` and `GITHUB_TOKEN` to the Gradle step
+  (for example, `env: GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}`) and give the job
+  `packages: read` permission. A workflow's `GITHUB_TOKEN` can read the package only if
+  the consuming repository has been granted read access to it in the package's access
+  settings. Otherwise, store a classic personal access token with `read:packages` as an
+  Actions secret and use that instead.
+
+### Local development against a checkout
+
+To build against an unreleased local checkout instead, use a Gradle
+[composite build](https://docs.gradle.org/current/userguide/composite_builds.html). Gradle
+substitutes the checkout for the dependency, so no registry or credentials are involved:
 
 ```kotlin
 // settings.gradle.kts of the consuming build
@@ -631,14 +676,59 @@ includeBuild("../booking-lifecycle")
 
 ```kotlin
 // build.gradle.kts of the consuming build
-kotlin {
-    jvmToolchain(25)
-}
-
 dependencies {
-    implementation("io.github.castab:booking-lifecycle:0.1.0-SNAPSHOT")
+    implementation("io.github.castab:booking-lifecycle:0.0.0-SNAPSHOT")
 }
 ```
+
+## Building and testing
+
+```bash
+./gradlew clean build
+```
+
+On Windows:
+
+```powershell
+.\gradlew.bat clean build
+```
+
+`build` compiles the library, runs the full test suite, and assembles the main, sources,
+and javadoc jars. It does not publish anything and needs no GitHub credentials. Local
+builds use the version `0.0.0-SNAPSHOT`.
+
+The build cache is enabled. To make the tests run again rather than reuse cached results,
+add `--no-build-cache` (or run `./gradlew test --rerun`).
+
+Tests are written with [Kotest](https://kotest.io) 6.2.3 (`FunSpec`, Kotest assertions) on
+the JUnit Platform. They use concrete test-owned fixtures for lifecycle behavior and
+[MockK](https://mockk.io) 1.14.11 for one mocking test. MockK works on Java 25 as
+resolved, with Byte Buddy 1.18.2, and needs no dependency override. Test dependencies
+are not part of the library's published runtime or API dependencies.
+
+The [CI workflow](.github/workflows/ci.yml) runs `./gradlew clean build` on Java 25
+(Temurin) for every push and pull request.
+
+## Releasing
+
+A GitHub Release is the only point where a version is published. Work on branches and on
+`main` is verified by CI but never published.
+
+1. Merge the desired changes to `main` and confirm CI is green.
+2. Create a GitHub Release with a new tag of the form `vMAJOR.MINOR.PATCH`, for example
+   `v0.1.0`. Prerelease suffixes such as `v0.2.0-alpha.1` are also accepted.
+3. Publishing the release triggers the [Publish workflow](.github/workflows/publish.yml).
+   It validates the tag and runs `./gradlew clean build` on Java 25.
+4. If every test passes, the workflow publishes the version without the `v` (`0.1.0`) to
+   GitHub Packages. If the tag is malformed or any test fails, nothing is published.
+
+Tags that don't match the format are rejected: `0.1.0` (no `v`), `v0.1`, `v01.0.0`,
+build metadata such as `v1.0.0+build.5`, and `SNAPSHOT` versions. No release version is
+ever written into source-controlled files.
+
+**Published versions are immutable.** Never try to overwrite a published version. If
+`0.1.0` has a problem, fix it and release `0.1.1`. If a Publish run fails before
+uploading anything (for example, a transient error), use **Re-run jobs** on that run.
 
 ## Current scope
 
@@ -648,10 +738,11 @@ What exists today:
   6 abstract transition functions;
 - KDoc on every public declaration;
 - a Kotest suite covering adopter-owned fixtures, legal paths, cancellation from every
-  active phase, phase classification, covariant returns, terminal shape, and MockK.
+  active phase, phase classification, covariant returns, terminal shape, and MockK;
+- GitHub Actions CI on Java 25, and release publishing to GitHub Packages.
 
 What does not exist: persistence, serialization, events, framework integrations, runtime
-validation, publishing, or any business model.
+validation, Maven Central publishing, or any business model.
 
 ## Future direction
 
@@ -667,6 +758,9 @@ booking-lifecycle-mongo
 
 If that happens, the core lifecycle semantics documented here should stay
 persistence-agnostic, and adapters should build on the core without changing its model.
+
+Publishing to Maven Central may be added as an additional distribution channel. If it is,
+GitHub Packages will keep working for existing consumers.
 
 For contributors and coding agents: the architectural rules for changing this repository
 are in [`AGENTS.md`](AGENTS.md).
