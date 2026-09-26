@@ -62,10 +62,16 @@ extensions, and own their executable and process lifecycle.
   the deployment configuration: its `application.conf` and environment. Never ship an
   `application.conf` (or any other deployment configuration) in the runtime's
   `src/main/resources`.
-- **Logging ownership.** `commerce-runtime` emits logs through the logging API (Kotlin
-  Logging on SLF4J) but does not configure the consuming application's logging system.
+- **Logging ownership.** `commerce-runtime` owns its logging calls and the facade it
+  compiles against (Kotlin Logging on the SLF4J API). The concrete application owns the
+  SLF4J provider (Logback or any other implementation) and the production logging
+  configuration. Never add an SLF4J provider (`logback-classic`, `slf4j-simple`,
+  `log4j-slf4j2-impl`, ...) to the runtime's `api`, `implementation`, or `runtimeOnly`
+  dependencies. The runtime's tests may choose Logback, but only as `testRuntimeOnly`.
   Never ship a `logback.xml`, `logback-test.xml`, or other logging configuration in the
-  runtime's `src/main/resources`. The concrete application owns logging configuration.
+  runtime's `src/main/resources`. Do not remove or weaken the runtime's logging calls to
+  compensate; this rule is about who owns the implementation, not whether the runtime
+  logs.
 - The runtime's `src/main/resources` holds only runtime-owned artifacts: its Flyway
   migrations in `db/commerce/`. Configuration and logging resources that tests need live
   in `runtime/src/test/resources` and are never published.
@@ -860,7 +866,11 @@ MongoDB drivers  Jackson  kotlinx.serialization  Logback  kotlin-logging  NATS  
 
 **`:runtime`.** The runtime stack is fixed: http4k (core, Jetty server, kotlinx-serialization
 format), kotlinx.serialization, HikariCP, JDBI, the PostgreSQL driver, Flyway, Hoplite
-(HOCON), Kotlin Logging, and Logback. A library whose types appear in the runtime's public
+(HOCON), and Kotlin Logging on the SLF4J API. No SLF4J provider is part of the published
+stack; Logback is a `testRuntimeOnly` dependency of the runtime's own tests, and the
+published POM and module metadata must never select a provider (check with
+`./gradlew :runtime:dependencies --configuration runtimeClasspath`). A library whose
+types appear in the runtime's public
 API is an `api` dependency; everything else is `implementation` or `runtimeOnly`. The
 current `api` set (http4k core and its kotlinx-serialization format, kotlinx.serialization,
 JDBI, HikariCP) is deliberate but revisitable. Do not grow it casually; see

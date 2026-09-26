@@ -12,6 +12,7 @@ jdbi = "3.54.0"
 postgresql = "42.7.13"
 flyway = "13.3.0"
 hoplite = "2.9.0"
+# Test-only in commerce-runtime: consuming applications choose their own SLF4J provider.
 logback = "1.6.3"
 kotlin-logging = "8.0.4"
 

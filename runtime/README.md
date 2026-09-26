@@ -41,9 +41,10 @@ concrete commerce application   (owns main() and the process)
 - **defines the configuration it requires, but ships none.** The runtime declares
   `CommerceRuntimeConfiguration` and provides its Hoplite/HOCON loading machinery. The
   concrete application supplies the actual `application.conf` and deployment environment.
-- **emits logs, but does not configure logging.** The runtime logs through Kotlin Logging
-  (SLF4J) and ships no `logback.xml`. The concrete application owns its logging
-  configuration.
+- **emits logs, but does not choose or configure the logging backend.** The runtime logs
+  through Kotlin Logging on the SLF4J API. It selects no SLF4J provider (its published
+  dependencies include no Logback or other backend) and ships no `logback.xml`. The
+  concrete application owns the provider and its configuration.
 
 It is also not a specific business's backend. Catering, mobile detailing, computer
 repair, pet and service appointments, and point of sale should all be able to use it.
@@ -182,7 +183,7 @@ declared in [`gradle/libs.versions.toml`](../gradle/libs.versions.toml):
 | Database | PostgreSQL (driver 42.7) through HikariCP 7.1 and JDBI 3.54 |
 | Migrations | Flyway 13.3 |
 | Configuration | Hoplite 2.9 with HOCON, plus explicit environment overrides |
-| Logging | Kotlin Logging 8 on Logback 1.6 |
+| Logging | Kotlin Logging 8 on the SLF4J 2 API; no provider is selected (the runtime's own tests use Logback 1.6) |
 | Tests | Kotest 6.2, real PostgreSQL through the Docker CLI |
 | Formatting | ktlint (the repository's single formatter) |
 
@@ -320,13 +321,30 @@ text, stack traces, and exception details of unexpected failures never reach a r
 
 commerce-runtime emits logs through Kotlin Logging on the SLF4J API, as key=value
 `event=` messages (for example `event=server_started`, `event=flyway_migrate`,
-`event=request_failed`). It ships no `logback.xml` and never configures the logging system
-of the process it runs in. The concrete application owns its logging configuration:
-levels, appenders, format, and any environment-driven level overrides. Logback is the
-backend the runtime's stack is built and tested with. An application that ships no
-Logback configuration gets Logback's built-in default (everything at `DEBUG` to the
-console, including Jetty, HikariCP, and Hoplite), so every application should provide its
-own `logback.xml`.
+`event=request_failed`). Ownership is split:
+
+- **commerce-runtime** owns its logging calls and the facade it compiles against (Kotlin
+  Logging and `slf4j-api`).
+- **The concrete application** owns the SLF4J provider (Logback, Log4j 2, or another
+  implementation) and the production logging configuration: levels, appenders, format,
+  and any environment-driven level overrides.
+
+The published `commerce-runtime` selects no provider and ships no logging configuration.
+An application must therefore add a provider itself, for example:
+
+```kotlin
+dependencies {
+    implementation("io.github.castab:commerce-runtime:<version>")
+    runtimeOnly("ch.qos.logback:logback-classic:<version>") // the application's choice
+}
+```
+
+Without a provider, SLF4J prints a one-time warning and discards every log event. With
+Logback but no configuration, Logback's built-in default logs everything at `DEBUG` to
+the console, including Jetty, HikariCP, and Hoplite. Either way, the application should
+provide both a provider and its configuration. The runtime's own tests use Logback
+(`testRuntimeOnly`) with `src/test/resources/logback-test.xml`, and neither is
+published.
 
 ### Health
 

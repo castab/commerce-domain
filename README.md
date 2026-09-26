@@ -53,13 +53,15 @@ concrete commerce application    (the consuming project)
    commerce repositories and routes, and application contribution points. It is a
    library. It is not itself an application, and it provides no default application and
    no `main()`. It defines the configuration it requires but ships no `application.conf`,
-   and it emits logs but ships no logging configuration.
+   and it emits logs through the SLF4J API but selects no logging backend and ships no
+   logging configuration.
 3. **Concrete application.** The consuming project, for example Fiona's catering
    application or a detailing, repair, pet salon, or point-of-sale application. It
    depends on `commerce-runtime` and supplies its business-specific behavior and details
    through explicit `ApplicationContributions`. It owns `main()` and its process
    lifecycle, its deployment configuration (`application.conf` and environment), and its
-   logging configuration (`logback.xml`), and it creates and starts the runtime.
+   logging backend (an SLF4J provider such as Logback) and logging configuration, and it
+   creates and starts the runtime.
 
 The module dependency points one way: `:runtime` → `:domain`, never the reverse. The build
 enforces it. `:domain`'s `check` fails if its runtime classpath ever contains anything

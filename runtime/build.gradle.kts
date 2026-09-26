@@ -7,8 +7,8 @@ import java.util.UUID
 //
 // It depends on :domain (never the reverse) and carries the runtime stack:
 // http4k on Jetty, kotlinx.serialization, PostgreSQL through HikariCP and JDBI, Flyway,
-// Hoplite/HOCON configuration, and Kotlin Logging on Logback. Shared toolchain, test,
-// lint, and publishing conventions come from the root build.gradle.kts.
+// Hoplite/HOCON configuration, and Kotlin Logging on the SLF4J API. Shared toolchain,
+// test, lint, and publishing conventions come from the root build.gradle.kts.
 plugins {
     `java-library`
     `maven-publish`
@@ -41,13 +41,18 @@ dependencies {
     implementation(libs.hoplite.hocon)
     // Hoplite decodes configuration data classes through Kotlin reflection.
     implementation(kotlin("reflect"))
+    // The runtime logs through Kotlin Logging on the SLF4J API only. It never selects an
+    // SLF4J provider (Logback or any other): the concrete application owns the logging
+    // backend and its configuration.
     implementation(libs.kotlin.logging.jvm)
 
     runtimeOnly(libs.postgresql)
-    runtimeOnly(libs.logback.classic)
 
     testImplementation(libs.kotest.runner.junit5)
     testImplementation(libs.kotest.assertions.core)
+    // The runtime's own tests choose Logback as their SLF4J provider, configured by
+    // src/test/resources/logback-test.xml. It never reaches the published dependencies.
+    testRuntimeOnly(libs.logback.classic)
 }
 
 publishing {
