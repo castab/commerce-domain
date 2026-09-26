@@ -407,8 +407,11 @@ fun describe(phase: BookingLifecycle): String =
 Below is a complete application-owned chain for a catering business. It lives in the
 application's own package. Every field and every type other than `BookingLifecycle`
 belongs to the application, including the identities: the library defines no booking
-record, booking ID, customer, or customer ID. The application declares its own
-`BookingId` and `CustomerId` and carries them through its own phase types.
+record, booking ID, customer, or customer ID. This application declares its own
+`BookingId` and `CustomerId` and chooses to carry one `BookingId` through every phase.
+That is the example's choice, not a protocol requirement: how a request, its quote, and
+its booking are known to be the same booking is application-owned and remains an open
+question for the library.
 
 ```kotlin
 package com.example.catering
@@ -777,8 +780,10 @@ implements a lifecycle phase; a mobile-detailing application might define entire
 different types. Neither has to share a customer or booking schema through this library.
 
 An application relates its entities to commerce facts from the outside, typically by
-storing a document's `id` or `reference` next to its own records. With `commerce-runtime`
-it can write its inquiry, the estimate, and the relationship between them in one
+storing a document's `id` or `reference` next to its own records. `commerce-runtime`
+provides the shared transaction boundary for writing such relationships alongside the
+application's own records. Once the runtime persists commerce facts, an application will
+be able to write its inquiry, the estimate, and the relationship between them in one
 transaction, without either generic module knowing about the relationship.
 
 The library deliberately offers no generic owner, party, subject, reference, context, or
@@ -792,7 +797,10 @@ estimates, quotes, and invoices.
 
 A financial document is an independent financial fact: its identity, version lineage, stage,
 line items, currency, and derived totals. It carries no customer, inquiry, or booking
-reference; applications persist those relationships externally.
+reference; applications persist those relationships externally. It also carries no
+recipient or billing snapshot (name, email, address): whether an issued document should
+ever hold an immutable recipient snapshot as part of the financial fact is an open design
+question, separate from customer ownership.
 
 > **Upgrading from 0.0.3 or 0.0.4.** Those releases required a `customerId` on every
 > document, including in `create` and `restore`. It has been removed, which is a source and
@@ -1794,12 +1802,13 @@ Applications define the actual role bundles and may add their own, for example:
 import io.github.castab.commerce.staff.*
 import java.util.UUID
 
-val EmailRespond = PermissionKey("fionas.email.respond")
-val CustomerService = RoleDefinition(
-    key = RoleKey("fionas.customer-service"),
-    displayName = "Customer Service",
-    description = "Handles customer communication",
-    permissions = setOf(EmailRespond),
+// Application-defined example keys; the "example." prefix stands for your own namespace.
+val MessageRespond = PermissionKey("example.message.respond")
+val Support = RoleDefinition(
+    key = RoleKey("example.support"),
+    displayName = "Support",
+    description = "Responds to incoming messages",
+    permissions = setOf(MessageRespond),
 )
 
 val StripeAdapterRole = RoleDefinition(

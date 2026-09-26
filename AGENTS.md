@@ -174,9 +174,18 @@ estimate it issues is application policy.
 
 `commerce-runtime` provides reusable infrastructure and orchestration for commerce-domain
 concepts. It does not provide generic customer persistence, customer CRUD, customer HTTP
-endpoints, or a generic application data model. Application persistence may share the
-runtime's `Transactor` and `Transaction`. Relationships between application entities and
-commerce-domain facts are application-owned.
+endpoints, or a generic application data model. `commerce-runtime` owns the shared
+transaction abstraction; application repositories may use the same `Transactor` and
+`Transaction`. Relationships between application entities and commerce-domain facts are
+application-owned.
+
+The runtime currently owns no commerce repository or table. It provides the transaction
+boundary required for future atomic application plus commerce writes; cross-boundary
+atomicity will be exercised once the runtime owns its first real commerce repository. Do
+not create a placeholder commerce table or fake repository to demonstrate it earlier, and
+do not describe the current tests as proving it. `commerce.customers`, a table from an
+earlier design, is removed unconditionally by a forward migration, with no guard,
+archive, or compatibility layer.
 
 ## Runtime opinionation
 
@@ -1108,11 +1117,18 @@ dependency just to support CI or publishing.
 - The tests are the runtime's only executable consumer in this repository.
   `CommerceRuntimeSpec` composes the runtime the way a concrete application does: explicit
   `ApplicationContributions`, `commerceRuntime(...)`, `start()`, real HTTP and
-  PostgreSQL, then `close()`. Keep the transaction coverage: several writes sharing one
-  `Transaction` commit and roll back together, and an application route's failure rolls
-  back its writes. When the runtime gains commerce repositories, extend that coverage to
-  an application table and a commerce table in one transaction. Do not add a fake
-  commerce capability just to give runtime tests something domain-specific to exercise.
+  PostgreSQL, then `close()`. Keep the transaction coverage: contributed routes receive
+  `CommerceRuntimeContext`, use `context.transactor`, and persist a contributed migration's
+  table; several application-owned writes sharing one `Transaction` commit and roll back
+  together; an application route's failure rolls back its writes. These tests prove the
+  shared transaction boundary, not atomicity across application and commerce persistence.
+  Do not add a fake commerce capability just to give runtime tests something
+  domain-specific to exercise.
+- **Future test requirement.** When the first legitimate commerce repository is added (a
+  likely candidate is financial-document persistence or history, but no API is decided),
+  add an integration test that (1) writes an application-owned row, (2) writes a
+  commerce-owned row, (3) fails intentionally before commit, and (4) verifies both writes
+  rolled back.
 
 Run:
 
@@ -1189,10 +1205,14 @@ or in `:runtime`, and only if it is generic across the known consumers.
 
 These are intentionally unresolved. Do not settle them incidentally.
 
-- **Booking identity.** The protocol does not say how an `InitialRequest`, its `Quote`, and
-  its `Booked` model are known to be the same booking. Applications carry their own
-  identifier. Decide any library involvement explicitly, and don't bolt an `id` property
-  onto the phase interfaces or reintroduce a generic booking record to answer it.
+- **Booking identity (unresolved; application-owned).** The protocol does not say how an
+  `InitialRequest`, its `Quote`, and its `Booked` model are known to be the same booking.
+  `BookingLifecycle` is reusable phase topology and legal transitions; concrete application
+  booking models own identity, data, relationships, and persistence. An application may
+  preserve one application-defined booking or opportunity ID across
+  `InitialRequest → Quote → Booked`, but that is not a generic commerce invariant. Do not
+  add a generic `BookingId`, add IDs to the lifecycle interfaces, or reintroduce a generic
+  `Booking` record without an explicit architectural decision.
 - **Phase exclusivity enforcement.** One class can currently implement several phases.
   Whether to enforce exclusivity at the type level is undecided.
 - **Booking and financial coupling.** The two domains are deliberately independent.
@@ -1206,11 +1226,15 @@ These are intentionally unresolved. Do not settle them incidentally.
   timestamp order, so a history in which an over-allocation was later reversed is
   accepted. Whether to reject histories that were inconsistent at some earlier moment is
   undecided.
-- **Financial document numbering, dates, and recipients.** Human-facing document numbers,
-  issue and due dates, and customer relationships are application data. Whether a document
-  should ever carry issuance-time recipient information (`BillTo`, `InvoiceRecipient`,
-  `DocumentRecipient`, ...) is undecided; do not add one incidentally, and do not use it to
-  reintroduce a customer reference.
+- **Financial document numbering and dates.** Human-facing document numbers, issue and due
+  dates, and customer relationships are application data.
+- **Financial document recipient snapshots (unresolved).** Should an issued financial
+  document eventually carry an immutable recipient or billing snapshot as part of the
+  financial fact itself? That concerns document issuance semantics and historical
+  correctness, not customer ownership, and needs its own design discussion. Until then, do
+  not add `InvoiceRecipient`, `FinancialDocumentRecipient`, `BillTo`, `SoldTo`,
+  `BillingContact`, `RecipientSnapshot`, `CustomerSnapshot`, or name/email/address fields
+  to `FinancialDocument`, and never use such a type to reintroduce a customer reference.
 - **The booking extension seam.** How an application supplies strongly typed booking
   details (and phase rehydration, transition policy, serializers, and persistence) to
   `:runtime` is undecided. `runtime/README.md` lists the responsibilities identified so

@@ -142,10 +142,17 @@ runtime Transactor
         └──────────────► commerce repositories   (as the runtime gains commerce persistence)
 ```
 
-Both kinds of repository receive the same `Transaction`, so an application can, for
-example, insert its inquiry, the commerce estimate, and its own inquiry-to-estimate
-relationship, and commit all three together. Neither generic module knows about the
-relationship. Repositories never open their own transactions.
+`commerce-runtime` owns this shared transaction abstraction, and application repositories
+use the same `Transaction`. Repositories never open their own transactions.
+
+The runtime provides the transaction boundary required for future atomic application plus
+commerce writes. There is currently no runtime-owned commerce repository or table (see
+[Database and migrations](#database-and-migrations)), so no application-plus-commerce
+write exists yet, and none is tested. Once the runtime owns its first real commerce
+repository, an application will be able to, for example, insert its inquiry, the commerce
+estimate, and its own inquiry-to-estimate relationship, and commit all three together,
+without either generic module knowing about the relationship. Cross-boundary atomicity
+will be exercised by a test at that point.
 
 ### Provisional extension seam
 
@@ -308,11 +315,10 @@ Current commerce tables: none. The `commerce` schema and its history table remai
 for runtime persistence of commerce facts. An earlier migration
 (`V20260926120000__commerce_customers.sql`, released in 0.0.4) created
 `commerce.customers`; the forward migration `V20260926180000__drop_commerce_customers.sql`
-removes it, because customers are application-owned. Migration history is never edited, so
-a fresh installation creates and then drops that table. On an existing installation the
-forward migration fails, instead of losing data, while `commerce.customers` still holds
-rows or while an application object such as a foreign key still depends on it: move the
-data into application tables, remove the dependency, and migrate again.
+removes it unconditionally, because customers are application-owned. Migration history is
+never edited, so a fresh installation creates and then drops that table. There is no
+migration guard, data-preservation path, archive, or compatibility layer: any rows in
+`commerce.customers` are dropped with the table.
 
 ### Transactions
 
@@ -480,13 +486,19 @@ transaction in which the application writes it.
 
 The tests are this repository's only executable consumer of the runtime. The specs cover
 configuration loading and validation, the error contract, health and readiness, DTO
-serialization, Flyway discovery for commerce and application migrations, the upgrade path
-that drops `commerce.customers` (including its refusal to discard rows or dependent
-objects), and transaction commit and rollback across several writes sharing one
-`Transaction`. `CommerceRuntimeSpec` composes the runtime the way a concrete application
-does: it supplies explicit `ApplicationContributions` (an application migration and routes
-that persist an application-owned table through the shared `Transactor`), starts Jetty,
-exercises it over real HTTP and PostgreSQL, including error handling and rollback, and
-closes it. Database specs run against a real PostgreSQL 18 that
+serialization, every migration from an empty database, the upgrade path that drops
+`commerce.customers` (even when it holds rows), and commit and rollback of several
+application-owned writes sharing one `Transaction`. `CommerceRuntimeSpec` composes the
+runtime the way a concrete application does: it supplies explicit
+`ApplicationContributions` (an application migration and routes that receive
+`CommerceRuntimeContext` and persist an application-owned table through
+`context.transactor`), starts Jetty, exercises it over real HTTP and PostgreSQL, including
+error handling and rollback, and closes it.
+
+What the tests do **not** prove yet: atomicity across application-owned and
+commerce-owned persistence, because the runtime has no commerce-owned repository. When the
+first legitimate commerce repository is added, an integration test must write an
+application-owned row and a commerce-owned row in one transaction, fail intentionally
+before commit, and verify both writes rolled back. Database specs run against a real PostgreSQL 18 that
 the build starts through the Docker CLI. See
 [Building and testing](../README.md#building-and-testing).

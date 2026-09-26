@@ -6,9 +6,7 @@ import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
-import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
-import io.kotest.matchers.string.shouldContain
 import org.flywaydb.core.Flyway
 import org.jdbi.v3.core.Jdbi
 import java.util.UUID
@@ -56,7 +54,7 @@ class PersistenceSpec :
             }
 
         context("migrations") {
-            test("commerce migrations own the commerce schema and its own history table") {
+            test("every migration succeeds from an empty database; commerce migrations own the commerce schema and history") {
                 jdbi.appliedVersions("commerce.flyway_schema_history") shouldContainExactly
                     listOf("20260926120000", "20260926180000")
             }
@@ -116,7 +114,7 @@ class PersistenceSpec :
                 }
             }
 
-            test("the forward migration refuses to discard customer rows") {
+            test("the forward migration drops the table unconditionally, even when it still holds rows") {
                 withUpgradeDatabase { source, upgraded ->
                     upgraded.useHandle<Exception> {
                         it.execute(
@@ -125,35 +123,11 @@ class PersistenceSpec :
                         )
                     }
 
-                    shouldThrow<Exception> { DatabaseMigrations(source).migrate() }.stackTraceToString() shouldContain
-                        "commerce.customers still contains rows"
-                    upgraded.tableExists("commerce.customers") shouldBe true
-                    upgraded.count("commerce.customers") shouldBe 1
-                    upgraded.appliedVersions("commerce.flyway_schema_history") shouldContainExactly listOf("20260926120000")
-                }
-            }
+                    DatabaseMigrations(source).migrate()
 
-            test("the forward migration never cascades into objects that still depend on the table") {
-                withUpgradeDatabase { source, upgraded ->
-                    upgraded.useHandle<Exception> {
-                        it.execute(
-                            "CREATE TABLE public.legacy_application_links (customer_id uuid NOT NULL REFERENCES commerce.customers (id))",
-                        )
-                    }
-
-                    shouldThrow<Exception> { DatabaseMigrations(source).migrate() }.stackTraceToString() shouldContain
-                        "other objects depend on it"
-                    upgraded.tableExists("commerce.customers") shouldBe true
-                    upgraded
-                        .withHandle<String?, Exception> {
-                            it
-                                .createQuery(
-                                    "SELECT conname::text FROM pg_constraint " +
-                                        "WHERE conrelid = 'public.legacy_application_links'::regclass AND contype = 'f'",
-                                ).mapTo(String::class.java)
-                                .findOne()
-                                .orElse(null)
-                        }.shouldNotBeNull()
+                    upgraded.tableExists("commerce.customers") shouldBe false
+                    upgraded.appliedVersions("commerce.flyway_schema_history") shouldContainExactly
+                        listOf("20260926120000", "20260926180000")
                 }
             }
         }
@@ -161,7 +135,10 @@ class PersistenceSpec :
         context("transactions") {
             val transactor = Transactor(jdbi)
 
-            // Stand-ins for two application repositories that receive the same Transaction.
+            // Stand-ins for application repositories that receive the same Transaction. Every write
+            // here is application-owned: the runtime has no commerce-owned repository yet, so these
+            // tests prove the shared transaction boundary, not atomicity across application and
+            // commerce persistence. See the future test requirement in AGENTS.md.
             fun insertRecord(
                 transaction: Transaction,
                 value: String,
@@ -190,11 +167,11 @@ class PersistenceSpec :
 
                 val (first, second) =
                     transactor.inTransaction { transaction ->
-                        insertRecord(transaction, "inquiry") to insertRecord(transaction, "inquiry-estimate link")
+                        insertRecord(transaction, "first application row") to insertRecord(transaction, "second application row")
                     }
 
-                transactor.inTransaction { findRecord(it, first) } shouldBe "inquiry"
-                transactor.inTransaction { findRecord(it, second) } shouldBe "inquiry-estimate link"
+                transactor.inTransaction { findRecord(it, first) } shouldBe "first application row"
+                transactor.inTransaction { findRecord(it, second) } shouldBe "second application row"
                 jdbi.count("public.test_application_records") shouldBe before + 2
             }
 
@@ -204,8 +181,8 @@ class PersistenceSpec :
 
                 shouldThrow<IllegalStateException> {
                     transactor.inTransaction { transaction ->
-                        written = insertRecord(transaction, "inquiry")
-                        insertRecord(transaction, "inquiry-estimate link")
+                        written = insertRecord(transaction, "first application row")
+                        insertRecord(transaction, "second application row")
                         throw IllegalStateException("application policy rejected the operation")
                     }
                 }.message shouldBe "application policy rejected the operation"

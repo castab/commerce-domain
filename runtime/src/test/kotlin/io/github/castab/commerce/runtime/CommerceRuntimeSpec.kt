@@ -151,11 +151,11 @@ class CommerceRuntimeSpec :
         }
 
         test("a contributed route persists through the shared transactor into a contributed migration's table") {
-            val created = createRecord("""{"value":"catering inquiry"}""")
+            val created = createRecord("""{"value":"application value"}""")
 
             created.status shouldBe Status.CREATED
             val record = created.record()
-            record.value shouldBe "catering inquiry"
+            record.value shouldBe "application value"
 
             val read = http(Request(Method.GET, "/test-application/records/${record.id}"))
             read.status shouldBe Status.OK

@@ -21,13 +21,16 @@ import org.jdbi.v3.core.Jdbi
 private val logger = KotlinLogging.logger {}
 
 /**
- * The shared runtime pieces an application may build on. Today that is the configuration
- * and the transaction boundary. Commerce repositories join the context as the runtime
- * gains persistence for commerce-domain facts; application code that must write its own
- * tables and commerce tables atomically then uses the same [transactor] and passes one
- * transaction to both. The runtime has no customer or other application data model, so
- * relationships between application entities and commerce facts stay in application
- * repositories.
+ * The shared runtime pieces an application may build on: the configuration and the
+ * transaction boundary. Application repositories use the same [transactor] and
+ * [io.github.castab.commerce.runtime.persistence.Transaction] the runtime uses.
+ *
+ * The runtime provides the transaction boundary required for future atomic application
+ * plus commerce writes. It owns no commerce repository yet, so no such cross-boundary write
+ * exists today; commerce repositories join the context only when the runtime gains real
+ * persistence for commerce-domain facts. The runtime has no customer or other application
+ * data model, so relationships between application entities and commerce facts stay in
+ * application repositories.
  *
  * Part of the provisional application-extension seam; see [ApplicationContributions].
  */
