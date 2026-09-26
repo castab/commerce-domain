@@ -16,6 +16,11 @@ dependencyResolutionManagement {
     }
 }
 
-// The project name is the published Maven artifactId: io.github.castab:commerce-domain.
-// It is independent of the GitHub repository name and of the checkout directory name.
-rootProject.name = "commerce-domain"
+// The root project is the `commerce` toolkit. It contains no sources of its own.
+rootProject.name = "commerce"
+
+// Gradle project names are not artifact identities. Each module sets its published
+// artifactId explicitly: :domain -> io.github.castab:commerce-domain and
+// :service -> io.github.castab:commerce-service.
+include("domain")
+include("service")

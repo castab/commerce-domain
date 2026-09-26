@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  commerce-service logging defaults. An application that ships its own logback.xml
+  ahead of this jar on the classpath, or sets -Dlogback.configurationFile, replaces it.
+-->
+<configuration>
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} level=%-5level logger=%logger{36} message=%msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <root level="${LOG_LEVEL:-INFO}">
+    <appender-ref ref="STDOUT" />
+  </root>
+
+  <logger name="com.sksamuel.hoplite" level="WARN" />
+  <logger name="org.eclipse.jetty" level="WARN" />
+  <logger name="com.zaxxer.hikari" level="WARN" />
+</configuration>

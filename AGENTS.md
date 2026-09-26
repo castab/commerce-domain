@@ -1,17 +1,137 @@
 # AGENTS.md
 
 The architectural contract for contributors and coding agents working in this repository.
-Read this before changing anything in `src/main`, and before adding a dependency, a
-module, or a lifecycle concept.
+Read this before changing anything under `domain/src/main` or `service/src/main`, and
+before adding a dependency, a module, or a lifecycle concept.
 
-[`README.md`](README.md) is the adopter-facing introduction. This file explains the rules
-and why seemingly reasonable changes can be architecturally wrong.
+[`README.md`](README.md) introduces the project, [`domain/README.md`](domain/README.md)
+and [`service/README.md`](service/README.md) introduce each artifact to adopters. This file
+explains the rules and why seemingly reasonable changes can be architecturally wrong.
 
-## Repository mission
+# Project architecture
 
-`commerce-domain` is a reusable library of immutable commerce domain models and lifecycle
-APIs, shared by multiple applications. Each domain lives in its own package beneath
-`io.github.castab.commerce`:
+`commerce` is a Gradle multi-project build with exactly two modules:
+
+| Gradle project | Published artifact | Role |
+|---|---|---|
+| `:domain` | `io.github.castab:commerce-domain` | Pure commerce vocabulary and invariants. Depends on `kotlin-stdlib` only. |
+| `:service` | `io.github.castab:commerce-service` | Opinionated, reusable application/runtime layer: http4k on Jetty, PostgreSQL via HikariCP, JDBI, and Flyway, kotlinx.serialization, Hoplite configuration, transactions, HTTP conventions, explicit composition. |
+
+The root project coordinates shared build configuration and contains no sources.
+
+These rules are non-negotiable without an explicit decision from the maintainer.
+
+## Dependency direction
+
+`:service` may depend on `:domain`. `:domain` must never depend on `:service`, directly or
+transitively. Within the build the dependency is `api(project(":domain"))`. It is never
+resolved from GitHub Packages.
+
+## Domain purity
+
+Do not introduce HTTP, persistence, serialization, configuration, logging, framework, or
+deployment concerns into `:domain`. A consumer such as a payment adapter must be able to
+depend on `commerce-domain` without acquiring http4k, Jetty, JDBI, HikariCP, PostgreSQL,
+Flyway, Hoplite, or any other service-runtime infrastructure. `:domain:check` enforces this
+through `verifyRuntimeDependencies`. Do not annotate or alter domain types to make HTTP
+serialization or persistence convenient; translate explicitly in `:service`.
+
+## Semantic preservation
+
+Before changing an existing domain model, explain what the affected type means before the
+change and what it means afterward. Do not mechanically move fields or relationships
+between domain models merely to satisfy an implementation request. Treat existing type
+distinctions as intentional unless evidence shows otherwise. If a proposed change alters
+the semantic meaning of a type, call that out explicitly during planning. Restructuring
+work (moving files, changing builds) must not redesign domain semantics.
+
+## Application relationships
+
+A relationship belongs in `commerce-domain` when one domain concept cannot meaningfully
+express its semantics or invariants without the other concept. Relationships that
+coordinate otherwise independently meaningful concepts belong to the consuming
+application/service layer. Do not add relationships to `commerce-domain` merely because
+`commerce-service` commonly coordinates those concepts. Booking and financial documents,
+for example, stay independent in the domain. `:service` may establish and persist their
+association.
+
+## Service opinionation
+
+It is acceptable, and intended, for `commerce-service` to establish conventions around
+http4k, Jetty, PostgreSQL, JDBI, Flyway, kotlinx.serialization, Hoplite, transactions, and
+HTTP behavior. Do not weaken useful abstractions to support hypothetical alternative
+frameworks. The service rules are:
+
+- Routes translate only: request DTO → domain values → one application operation →
+  response DTO. No SQL and no orchestration in routes.
+- Application operations orchestrate and own the transaction boundary through
+  `Transactor`. Repositories take the caller's `Transaction`.
+- Expected failures are `CommerceFailure` subclasses, whose messages are written for
+  callers. `CommerceErrorHandling` maps every failure to the documented
+  `{"code", "message"}` contract. SQL, stack traces, and implementation detail never reach
+  a response.
+- Transport DTOs are `@Serializable` classes in `:service`, serialized through
+  `CommerceJson`.
+- Configuration is HOCON through Hoplite plus explicit, documented environment overrides.
+  Never commit secrets.
+- Composition is explicit in `commerceService(...)`. No DI framework, no annotation
+  scanning.
+
+## Known-use-case generalization
+
+Generalize from the known consumers: catering, mobile detailing, computer repair,
+pet/service appointments, and point of sale. Code belongs in generic `commerce-service`
+only if it makes sense for more than one of them. Issuing invoices, recording, allocating,
+and refunding payments, associating financial documents with bookings, lifecycle
+transitions, HTTP error representation, and PostgreSQL transactions qualify. Guest counts,
+catering packages, vehicle make or model, paint correction, pet breed, device serial
+numbers, and diagnostic notes do not. Do not build abstractions solely for hypothetical
+consumers.
+
+## Booking extensibility
+
+Do not introduce concrete application-specific booking types (`CateringBooking`,
+`DetailingBooking`, `RepairBooking`, `GroomingBooking`, `PetSalonBooking`, ...) into either
+generic module. Application-specific booking details must be strongly typed and
+compile-time known to the concrete application. Never model them as opaque JSON
+(`type: String, details: JsonObject`). The extension seam is an open design question (see
+[Open questions](#open-questions)); do not invent a large `BookingExtension<B>` API
+incidentally. If a booking type parameter is ever introduced, keep it inside booking APIs.
+It must not spread into customer, financial, or payment APIs.
+
+## Booking optionality
+
+Do not make booking mandatory for financial or payment functionality. Booking is one
+commerce capability, not the root of commerce. A point-of-sale application uses
+customers, invoices, payments, allocations, refunds, and reconciliation without a
+booking. Every service operation, table, and endpoint outside booking must work with no
+booking at all.
+
+## Provider neutrality
+
+Do not leak Stripe or another payment provider into generic commerce models or service
+APIs: no `StripePayment`, `StripeRefund`, `PaymentIntent`, `Charge`, or provider SDK
+dependency in either module. Providers sit behind the provider-neutral contract in
+`io.github.castab.commerce.payment.adapter`. A provider adapter depends on
+`commerce-domain` only.
+
+## Authorization in the service
+
+The staff principals, roles, and permissions remain domain concepts in `:domain`. Do not
+remove or redesign them. `:service` does not yet authenticate HTTP requests or check
+permissions. Add that in a dedicated iteration, not incidentally. Keep operations
+explicit about their inputs so a principal can be added without restructuring.
+
+## Kotlin style
+
+Do not use redundant explicit `public` modifiers anywhere in either module. Write
+`data class Customer(...)`, not `public data class Customer(...)`.
+
+## Domain module mission
+
+`commerce-domain` (`:domain`) is a reusable library of immutable commerce domain models
+and lifecycle APIs, shared by multiple applications. Each domain lives in its own package
+beneath `io.github.castab.commerce`:
 
 | Domain | Package | Style |
 |---|---|---|
@@ -63,30 +183,43 @@ booking lifecycle itself, it probably does not belong in the booking lifecycle A
 
 | Path | Contents |
 |---|---|
-| `src/main/kotlin/io/github/castab/commerce/booking/lifecycle/BookingLifecycle.kt` | The entire booking lifecycle API. |
-| `src/main/kotlin/io/github/castab/commerce/customer/Customer.kt` | Minimal customer identity and contact value objects. |
-| `src/main/kotlin/io/github/castab/commerce/booking/` | Booking identity association, contacts, postal address, and location. |
-| `src/main/kotlin/io/github/castab/commerce/payment/` | The payment reconciliation API: `PaymentMethod.kt`, `ExternalPaymentReference.kt`, `ExternalRefundReference.kt`, `PaymentRecord.kt`, `PaymentAllocation.kt`, `PaymentAllocationReversal.kt`, `RefundRecord.kt`, `RefundAllocation.kt`, `PaymentReconciliation.kt` (payment-level reconciliation and the shared validation helpers), and `FinancialDocumentReconciliation.kt`. |
-| `src/main/kotlin/io/github/castab/commerce/payment/adapter/` | The transport-neutral payment adapter contract and pure validation of provider observations. |
-| `src/main/kotlin/io/github/castab/commerce/financial/` | The financial document API: `FinancialDocument.kt` (the sealed class, its three stages, and change application), `Version.kt`, `Money.kt`, `LineItem.kt`, `ChangeOrder.kt`, `FinancialDocumentReference.kt`, and `FinancialDocumentHistory.kt` (the history SPI and its lookup extensions). |
-| `src/main/kotlin/io/github/castab/commerce/staff/` | Human and service principal identity and authorization: `Principal.kt`, `User.kt`, `ServiceIdentity.kt`, and `Authorization.kt`. |
-| `src/test/kotlin/io/github/castab/commerce/booking/lifecycle/BookingLifecycleSpec.kt` | Kotest `FunSpec` for the booking lifecycle contract. |
-| `src/test/kotlin/io/github/castab/commerce/booking/lifecycle/fixtures/TestBookingModels.kt` | Test-only "application-owned" booking models. |
-| `src/test/kotlin/io/github/castab/commerce/financial/*Spec.kt` | Kotest specs for the financial domain: `FinancialDocumentSpec`, `ChangeOrderSpec`, `FinancialDocumentHistorySpec`, `LineItemSpec`, `MoneySpec`, `VersionSpec`. |
-| `src/test/kotlin/io/github/castab/commerce/financial/fixtures/TestFinancialModels.kt` | Test-only money and line item helpers and an in-memory `FinancialDocumentHistory`. |
-| `src/test/kotlin/io/github/castab/commerce/payment/*Spec.kt` | Kotest specs for the payment domain: `PaymentRecordSpec`, `PaymentAllocationSpec`, `PaymentAllocationReversalSpec`, `RefundRecordSpec`, `RefundAllocationSpec`, `PaymentReconciliationSpec`, `FinancialDocumentReconciliationSpec`, and `PaymentDomainSpec` (the end-to-end history and the reflection shape tests). |
-| `src/test/kotlin/io/github/castab/commerce/payment/fixtures/TestPaymentModels.kt` | Test-only payment, document, and numeric-comparison helpers. |
-| `src/test/kotlin/io/github/castab/commerce/payment/adapter/PaymentAdapterContractSpec.kt` | Kotest coverage for the provider-neutral adapter contract and processing decisions. |
-| `src/test/kotlin/io/github/castab/commerce/staff/AuthorizationSpec.kt` | Kotest coverage for staff values, resolver behavior, and fail-closed authorization. |
-| `build.gradle.kts`, `settings.gradle.kts`, `gradle.properties` | Single-module build with the Java 25 toolchain and the Maven publication. |
-| `gradle/libs.versions.toml` | Version catalog. |
-| `.github/workflows/ci.yml` | CI: build and test on Java 25 for pull requests and pushes to `main`. |
-| `.github/workflows/publish.yml` | Publish to GitHub Packages when a GitHub Release is published. |
-| `README.md`, `AGENTS.md` | Documentation. Keep both in sync with the code. |
+| `settings.gradle.kts` | Root project `commerce`; `include("domain")`, `include("service")`. |
+| `build.gradle.kts` | Shared conventions only: group and version, the Java 25 toolchain, Kotlin JVM target, test setup, ktlint, and common POM and repository metadata. No sources. |
+| `gradle.properties`, `gradle/libs.versions.toml` | Build properties and the version catalog for both modules. |
+| `domain/build.gradle.kts` | The `commerce-domain` publication and the `verifyRuntimeDependencies` boundary check. |
+| `domain/src/main/kotlin/io/github/castab/commerce/booking/lifecycle/BookingLifecycle.kt` | The entire booking lifecycle API. |
+| `domain/src/main/kotlin/io/github/castab/commerce/customer/Customer.kt` | Minimal customer identity and contact value objects. |
+| `domain/src/main/kotlin/io/github/castab/commerce/booking/` | Booking identity association, contacts, postal address, and location. |
+| `domain/src/main/kotlin/io/github/castab/commerce/payment/` | The payment reconciliation API: `PaymentMethod.kt`, `ExternalPaymentReference.kt`, `ExternalRefundReference.kt`, `PaymentRecord.kt`, `PaymentAllocation.kt`, `PaymentAllocationReversal.kt`, `RefundRecord.kt`, `RefundAllocation.kt`, `PaymentReconciliation.kt` (payment-level reconciliation and the shared validation helpers), and `FinancialDocumentReconciliation.kt`. |
+| `domain/src/main/kotlin/io/github/castab/commerce/payment/adapter/` | The transport-neutral payment adapter contract and pure validation of provider observations. |
+| `domain/src/main/kotlin/io/github/castab/commerce/financial/` | The financial document API: `FinancialDocument.kt` (the sealed class, its three stages, and change application), `Version.kt`, `Money.kt`, `LineItem.kt`, `ChangeOrder.kt`, `FinancialDocumentReference.kt`, and `FinancialDocumentHistory.kt` (the history SPI and its lookup extensions). |
+| `domain/src/main/kotlin/io/github/castab/commerce/staff/` | Human and service principal identity and authorization: `Principal.kt`, `User.kt`, `ServiceIdentity.kt`, and `Authorization.kt`. |
+| `domain/src/test/kotlin/io/github/castab/commerce/booking/lifecycle/BookingLifecycleSpec.kt` | Kotest `FunSpec` for the booking lifecycle contract. |
+| `domain/src/test/kotlin/io/github/castab/commerce/booking/lifecycle/fixtures/TestBookingModels.kt` | Test-only "application-owned" booking models. |
+| `domain/src/test/kotlin/io/github/castab/commerce/financial/*Spec.kt` | Kotest specs for the financial domain: `FinancialDocumentSpec`, `ChangeOrderSpec`, `FinancialDocumentHistorySpec`, `LineItemSpec`, `MoneySpec`, `VersionSpec`. |
+| `domain/src/test/kotlin/io/github/castab/commerce/financial/fixtures/TestFinancialModels.kt` | Test-only money and line item helpers and an in-memory `FinancialDocumentHistory`. |
+| `domain/src/test/kotlin/io/github/castab/commerce/payment/*Spec.kt` | Kotest specs for the payment domain: `PaymentRecordSpec`, `PaymentAllocationSpec`, `PaymentAllocationReversalSpec`, `RefundRecordSpec`, `RefundAllocationSpec`, `PaymentReconciliationSpec`, `FinancialDocumentReconciliationSpec`, and `PaymentDomainSpec` (the end-to-end history and the reflection shape tests). |
+| `domain/src/test/kotlin/io/github/castab/commerce/payment/fixtures/TestPaymentModels.kt` | Test-only payment, document, and numeric-comparison helpers. |
+| `domain/src/test/kotlin/io/github/castab/commerce/payment/adapter/PaymentAdapterContractSpec.kt` | Kotest coverage for the provider-neutral adapter contract and processing decisions. |
+| `domain/src/test/kotlin/io/github/castab/commerce/staff/AuthorizationSpec.kt` | Kotest coverage for staff values, resolver behavior, and fail-closed authorization. |
+| `service/build.gradle.kts` | The `commerce-service` publication, its runtime stack, and the Docker-CLI PostgreSQL build service for tests. |
+| `service/src/main/kotlin/io/github/castab/commerce/service/config/` | `CommerceServiceConfiguration`: Hoplite/HOCON loading, environment overrides, validation. |
+| `service/src/main/kotlin/io/github/castab/commerce/service/persistence/` | HikariCP data source, `DatabaseMigrations` (Flyway), `Transactor`/`Transaction`, PostgreSQL error helpers. |
+| `service/src/main/kotlin/io/github/castab/commerce/service/application/` | `CommerceFailure` and `validating`. |
+| `service/src/main/kotlin/io/github/castab/commerce/service/http/` | `CommerceJson`, the error contract and filter, health routes. |
+| `service/src/main/kotlin/io/github/castab/commerce/service/customer/` | The representative capability: repository, operations, routes, DTOs. |
+| `service/src/main/kotlin/io/github/castab/commerce/service/runtime/` | The composition root `commerceService(...)`, `ApplicationContributions`, `CommerceRuntime`, and the development `main`. |
+| `service/src/main/resources/` | `application.conf`, `logback.xml`, and commerce migrations in `db/commerce/`. |
+| `service/src/test/kotlin/io/github/castab/commerce/service/` | Kotest specs for configuration, errors, health, serialization, persistence and transactions, the customer repository, and the composed service; `testing/TestDatabase.kt`. |
+| `.github/workflows/ci.yml` | CI: lint, domain tests, service tests, and the full build on Java 25 for pull requests and pushes to `main`. |
+| `.github/workflows/publish.yml` | Publish both artifacts to GitHub Packages when a GitHub Release is published. |
+| `README.md`, `domain/README.md`, `service/README.md`, `AGENTS.md` | Documentation. Keep all of them in sync with the code. |
 
-Maven coordinates: `io.github.castab:commerce-domain` (the artifactId is `rootProject.name`
-in `settings.gradle.kts`), published to the GitHub Packages registry of the repository that
-runs the Publish workflow (currently `https://maven.pkg.github.com/castab/commerce-domain`).
+Maven coordinates: `io.github.castab:commerce-domain` and `io.github.castab:commerce-service`,
+set by each module's publication `artifactId` (not by the Gradle project names), published
+at one shared version to the GitHub Packages registry of the repository that runs the
+Publish workflow. The repository is being renamed from `commerce-domain` to `commerce`, so
+that registry is `https://maven.pkg.github.com/castab/commerce`.
 
 # Booking lifecycle domain
 
@@ -382,8 +515,9 @@ Entry points: Estimate.create, Quote.create, Invoice.create
 ## Persistence and concurrency boundary
 
 - `FinancialDocumentHistory` is the only history access point. It is an SPI implemented by
-  applications. The library must never ship an implementation tied to a database, and
-  must never load previous versions implicitly or recursively.
+  applications (or by `:service`). `commerce-domain` must never ship an implementation
+  tied to a database; a PostgreSQL implementation belongs in `:service`. No
+  implementation may load previous versions implicitly or recursively.
 - `retrievePreviousVersion` performs zero lookups for version 1 and exactly one lookup
   otherwise. `retrieveVersion` performs exactly one lookup. `retrieveLatestVersion`
   delegates by `id`. Keep these guarantees, and the tests that verify them with MockK.
@@ -594,37 +728,64 @@ These sections apply to every domain and to the build.
 
 ## Persistence boundary
 
-There is no persistence in this repository. `FinancialDocumentHistory` is an SPI that
-applications implement, not a persistence layer. Do not add persistence incidentally while
-solving unrelated tasks.
+Persistence exists only in `:service`. `:domain` has none: `FinancialDocumentHistory` is
+an SPI that applications (or `:service`) implement, not a persistence layer. Do not add
+persistence to `:domain` for any reason.
 
-When persistence eventually arrives:
+In `:service`:
 
-- keep it in a separate module, so the core stays persistence-agnostic;
-- do not add SQL, document, or ORM concerns (annotations, surrogate keys, column names,
+- PostgreSQL through HikariCP and JDBI, with Flyway migrations. No ORM.
+- Commerce-owned tables live in the `commerce` schema, migrated from
+  `classpath:db/commerce` with their own history table (`commerce.flyway_schema_history`).
+  Application migrations run afterwards, in their own schema and history table, through
+  `ApplicationContributions.migrationLocations`. Never put application tables in the
+  `commerce` schema or commerce tables in an application location.
+- SQL always names the `commerce` schema explicitly. Do not rely on `search_path`: its
+  `"$user"` entry resolves to `commerce` when the role is named `commerce`.
+- Migrations are append-only. Never edit a migration that has been released.
+- Do not add SQL, document, or ORM concerns (annotations, surrogate keys, column names,
   optimistic-lock columns) to domain types. The financial `UUID` id and `Version` are
-  domain concepts, not persistence concerns, and stay as they are;
-- do not force adopter business models into library-owned persistence models;
-- do not require an ORM, and keep low-level adapters such as JDBI possible;
-- let applications own transaction boundaries where appropriate.
+  domain concepts, not persistence concerns, and stay as they are. Map rows to domain
+  values explicitly in repositories, restoring them through the domain's own
+  constructors and `restore` factories.
+- Do not force adopter business models into library-owned persistence models.
+- Repositories take the caller's `Transaction` and never begin, commit, or roll back.
+  Transaction boundaries belong to application operations, through `Transactor`. Do
+  not add repositories whose every call is an unrelated transaction.
+- Do not introduce a generic `Repository<T, ID>` or repository framework. Use
+  intention-revealing repositories, and implement a domain SPI (such as
+  `FinancialDocumentHistory`) where the domain already defines the boundary.
 
 ## Dependency policy
 
-The published `main` dependency surface is `kotlin-stdlib` only. Keep it that way.
+**`:domain`.** The published dependency surface is `kotlin-stdlib` only. Keep it that way.
+`verifyRuntimeDependencies` (part of `:domain:check`) fails the build if anything else
+reaches the domain's runtime classpath. Never weaken or bypass that task.
 
-Do not add these to core:
+Do not add these to `:domain`:
 
 ```text
-Spring  Ktor  Hibernate  JPA  JDBI  MongoDB drivers  Jackson  kotlinx.serialization
-NATS  Kafka
+Spring  Ktor  Hibernate  JPA  JDBI  HikariCP  PostgreSQL  Flyway  Hoplite  http4k  Jetty
+MongoDB drivers  Jackson  kotlinx.serialization  Logback  kotlin-logging  NATS  Kafka
 ```
 
-Put optional integrations in separate modules if and when they are justified. Test-only
-dependencies (Kotest, MockK) belong in `testImplementation` and must never leak into the
-runtime or API dependencies. Check with:
+**`:service`.** The runtime stack is fixed: http4k (core, Jetty server, kotlinx-serialization
+format), kotlinx.serialization, HikariCP, JDBI, the PostgreSQL driver, Flyway, Hoplite
+(HOCON), Kotlin Logging, and Logback. A library whose types appear in the service's public
+API is an `api` dependency; everything else is `implementation` or `runtimeOnly`. Never
+add Spring, Spring Boot, Hibernate, JPA, Micronaut, Quarkus, Ktor, a dependency-injection
+framework, or a payment-provider SDK (Stripe or any other).
+
+Versions for both modules live in `gradle/libs.versions.toml`. Service versions follow the
+reference backend (`castab/fionas-ui` `apps/backend`); check its current `main` before
+upgrading them.
+
+Test-only dependencies (Kotest, MockK) belong in `testImplementation` and must never leak
+into the runtime or API dependencies. Check with:
 
 ```bash
-./gradlew dependencies --configuration runtimeClasspath
+./gradlew :domain:dependencies --configuration runtimeClasspath
+./gradlew :service:dependencies --configuration runtimeClasspath
 ```
 
 No preview, EAP, milestone, RC, snapshot, or nightly dependencies. Never add a runtime
@@ -632,11 +793,11 @@ dependency just to support CI or publishing.
 
 ## Toolchain rules
 
-- **Java 25 is a hard requirement.** The Java toolchain, Kotlin `jvmTarget`, and
-  `JavaCompile.release` are all 25, and tests run on the Java 25 toolchain. Toolchain
-  auto-download is disabled (`gradle.properties`), and no foojay resolver is applied, so a
-  missing Java 25 fails the build. Do not lower any of these to accommodate a tool or a
-  consumer.
+- **Java 25 is a hard requirement of both modules.** The Java toolchain, Kotlin
+  `jvmTarget`, and `JavaCompile.release` are all 25 (configured once in the root
+  `build.gradle.kts`), and tests run on the Java 25 toolchain. Toolchain auto-download is
+  disabled (`gradle.properties`), and no foojay resolver is applied, so a missing Java 25
+  fails the build. Do not lower any of these to accommodate a tool or a consumer.
 - Versions: Kotlin 2.4.20, Kotest 6.2.5, MockK 1.14.11 (`gradle/libs.versions.toml`).
   The Gradle wrapper is 9.7.0, the newest Gradle that Kotlin 2.4.20 declares full
   compatibility with, and its distribution checksum is pinned. Do not bump Gradle beyond
@@ -654,17 +815,24 @@ dependency just to support CI or publishing.
 - **The Gradle Wrapper is authoritative.** Workflows run `./gradlew`, and
   `gradle/actions/setup-gradle` provides caching and wrapper validation. Do not install
   another Gradle, and do not add competing cache steps.
-- **CI must pass before publication.** `ci.yml` runs `./gradlew clean build
-  --no-build-cache` with `contents: read` only. It can never publish. `publish.yml` runs
-  the same verification, and publishes only if it succeeds. Never add
-  `continue-on-error`, skip tests, or reorder these steps.
+- **CI must pass before publication.** `ci.yml` runs, with `contents: read` only,
+  `ktlintCheck`, `:domain:test`, `:service:test`, and `build` (each with
+  `--no-build-cache`). It can never publish. `publish.yml` runs `./gradlew clean build
+  --no-build-cache` and publishes only if it succeeds. Never add `continue-on-error`,
+  skip tests, or reorder these steps. One workflow verifies both modules; do not split it
+  into per-module workflows.
+- **Service tests need Docker.** `:service:test` starts PostgreSQL through the runner's
+  Docker CLI (a Gradle build service in `service/build.gradle.kts`). Do not replace it
+  with Testcontainers, H2, or an embedded database, and do not skip database specs to get
+  CI green.
 - **Releases go to GitHub Packages, triggered only by a published GitHub Release.** Do not
   publish from pushes, pull requests, or schedules. `publish.yml` is the only workflow
   with `packages: write`. Do not grant `contents: write`, `id-token: write`, or other
   scopes unless a new requirement truly needs them.
 - **Maven versions derive from release tags.** A tag `vX.Y.Z[-prerelease]` becomes Maven
-  version `X.Y.Z[-prerelease]`, passed to Gradle as the `version` project property
-  (`ORG_GRADLE_PROJECT_version`). The build script's default, `0.0.0-SNAPSHOT`, is for
+  version `X.Y.Z[-prerelease]` for **both** artifacts, passed to Gradle as the `version`
+  project property (`ORG_GRADLE_PROJECT_version`). The modules always share one version,
+  and `commerce-service`'s POM depends on `commerce-domain` at that version. The build script's default, `0.0.0-SNAPSHOT`, is for
   local builds. Never write release versions into `build.gradle.kts`,
   `gradle.properties`, or the workflow files.
 - **Published versions are immutable.** Never design for overwriting a released version.
@@ -674,10 +842,15 @@ dependency just to support CI or publishing.
   through `credentials(PasswordCredentials::class)`. Local `build`, `test`, and
   `publishToMavenLocal` must keep working without any GitHub credentials. Never put
   tokens in repository files. Consumers keep theirs in `~/.gradle/gradle.properties`.
-- **Published artifacts:** the main jar, a sources jar, a javadoc jar (empty for now,
-  because the sources are Kotlin-only and Dokka is not used), the POM, and Gradle module
-  metadata. The POM declares the repository's license (Apache-2.0, see `LICENSE`). Keep
-  the two in sync.
+- **Artifact identity is not project identity.** The Gradle projects are `:domain` and
+  `:service`; their publications set `artifactId` to `commerce-domain` and
+  `commerce-service` (and `archivesName` to match). Never publish an artifact named
+  `domain` or `service`, and never change `io.github.castab:commerce-domain`.
+- **Published artifacts, per module:** the main jar, a sources jar, a javadoc jar (empty
+  for now, because the sources are Kotlin-only and Dokka is not used), the POM, and
+  Gradle module metadata. The POMs declare the repository's license (Apache-2.0, see
+  `LICENSE`). Keep the two in sync. `commerce-service` publishes a plain library jar;
+  deployable fat jars and images belong to consuming applications.
 - **Test-only dependencies must not leak into the published library.** Check the
   generated POM or `runtimeClasspath` after dependency changes.
 - **Routine feature work must not modify publication behavior.** Leave coordinates,
@@ -707,10 +880,14 @@ dependency just to support CI or publishing.
 - Prefer compile-time topology over runtime string or enum state validation.
 - Keep the public API small. Each domain should be readable in minutes. Don't add
   abstraction layers, reflection, classpath scanning, service locators, dependency
-  injection, or coroutines to the main source set.
+  injection, or coroutines to the `:domain` main source set.
+- In `:service`, composition is explicit: dependencies are constructed in order in
+  `commerceService(...)` with ordinary Kotlin. No DI container, annotation scanning, or
+  reflection-based wiring (Hoplite's reflective configuration decoding is the one
+  accepted use of reflection).
 - Keep Java callers in mind: `@JvmStatic` on companion factories, `@JvmField` on
   constants, `@JvmSynthetic` on internal helpers that must not be callable from Java.
-- Do not use explicit `public` visibility modifiers in Kotlin when `public` is already the language default. Prefer idiomatic implicit public visibility. Use explicit visibility modifiers only when they change semantics, such as `private`, `protected`, or `internal`.
+- Do not use explicit `public` visibility modifiers in Kotlin when `public` is already the language default, in either module. Prefer idiomatic implicit public visibility. Use explicit visibility modifiers only when they change semantics, such as `private`, `protected`, or `internal`.
 - Keep explicit API types and KDoc for published declarations. Kotlin's `explicitApi()`
   compiler mode is disabled because it requires redundant `public` modifiers. There is
   no ktlint standard rule configured specifically for redundant `public`; review that
@@ -729,7 +906,9 @@ dependency just to support CI or publishing.
   formats main sources first; in `build`, the lint check runs before that formatting.
   Keep `.editorconfig` as the shared source of ktlint settings. A baseline can be
   generated with `ktlintGenerateBaseline` for existing violations, but format tasks
-  ignore baselines. Do not add another overlapping formatter.
+  ignore baselines. Do not add another overlapping formatter. The plugin is applied to
+  the root project and both modules with one shared configuration; Spotless is
+  deliberately not used, even though the reference backend uses it.
 
 ## Testing expectations
 
@@ -768,6 +947,14 @@ dependency just to support CI or publishing.
   document or record, and that the financial types never mention the payment package.
   Update these deliberately. Never loosen them to make a change pass.
 - Tests must run on Java 25. Never lower the test runtime to get tests passing.
+- Service tests use Kotest `FunSpec` as well. Database specs run against a real
+  PostgreSQL provided by the build (the Docker CLI build service, or
+  `TEST_DATABASE_JDBC_URL`), create their own database through
+  `testing/TestDatabase.kt`, and apply the real migrations through `DatabaseMigrations`.
+  Never maintain a separate test schema, never use H2, and never use Testcontainers.
+- Service tests should prove behavior that matters: configuration loading, the error
+  contract, serialization of DTOs, transaction commit and rollback, repository behavior,
+  and the composed service over real HTTP. Don't write tests only to inflate coverage.
 
 Run:
 
@@ -779,6 +966,8 @@ Run:
 .\gradlew.bat clean test
 ```
 
+`:domain:test` needs no Docker; `:service:test` does.
+
 The build cache is on. Add `--no-build-cache` to force the tests to actually run.
 
 ## Documentation synchronization
@@ -786,10 +975,14 @@ The build cache is on. Add `--no-build-cache` to force the tests to actually run
 Any change to lifecycle topology or semantics must update, in the same change:
 
 - KDoc in `BookingLifecycle.kt` or in the financial sources;
-- the README: the relevant Mermaid diagram, transition tree, phase or stage table, API
-  listing, examples, and compile-error list;
+- `domain/README.md`: the relevant Mermaid diagram, transition tree, phase or stage
+  table, API listing, examples, and compile-error list;
 - this file: the topology blocks, invariants, and rules;
 - the tests.
+
+Changes to module boundaries, artifact coordinates, the service's HTTP or error
+contract, configuration, or migrations must update the root `README.md` and
+`service/README.md` in the same change.
 
 Code and documentation must never disagree about legal lifecycle edges or Maven
 coordinates. In the booking lifecycle, use the term **phase**. In the financial domain,
@@ -802,13 +995,22 @@ methods are the state machine".
 
 ## Scope discipline
 
-When solving a focused issue, do not opportunistically add persistence, serialization,
-payment logic outside the payment package, speculative customer/CRM fields, workflow engines, generic transition contexts, event
-buses, new domains, or new modules unless the requested work requires them. Do not couple
-the booking lifecycle to the other domains, and do not make the financial documents depend
-on payments. Prefer narrow architectural evolution.
-Do not split the project into `commerce-domain-persistence`, `commerce-domain-jdbi`, and
-similar modules until that work is requested.
+When solving a focused issue, do not opportunistically add persistence or serialization to
+`:domain`, payment logic outside the payment package, speculative customer/CRM fields,
+workflow engines, generic transition contexts, event buses, new domains, or new modules
+unless the requested work requires them. Do not couple the booking lifecycle to the other
+domains, and do not make the financial documents depend on payments. Prefer narrow
+architectural evolution.
+
+The project has exactly two modules, `:domain` and `:service`. Do not create speculative
+modules (`service-core`, `service-http4k`, `service-postgres`, `service-jdbi`,
+`service-runtime`, `service-testing`, `commerce-domain-persistence`, ...). Split
+`:service` only when a concrete consumer demonstrates the need, for example orchestration
+without http4k or PostgreSQL.
+
+In `:service`, do not create empty packages or placeholder layers for capabilities that
+have no code yet, and do not implement speculative endpoints or operations to fill out a
+list.
 
 ## Decision heuristics
 
@@ -822,7 +1024,7 @@ Before changing the core, ask:
 - Can the type system express this naturally without introducing a runtime framework?
 
 If the answers point away from the lifecycle itself, the change belongs in adopter code
-or in a future, separate module.
+or in `:service`, and only if it is generic across the known consumers.
 
 ## Open questions
 
@@ -848,6 +1050,13 @@ These are intentionally unresolved. Do not settle them incidentally.
 - **Financial document numbering, dates, and counterparties.** Human-facing document
   numbers, issue and due dates, and billing snapshots remain application data. The
   `Customer.Id` reference is now part of each financial document snapshot.
+- **The booking extension seam.** How an application supplies strongly typed booking
+  details (and phase rehydration, transition policy, serializers, and persistence) to
+  `:service` is undecided. `service/README.md` lists the responsibilities identified so
+  far. Do not invent the API incidentally, and never substitute opaque JSON.
+- **HTTP authentication and authorization.** The staff principals and permissions exist
+  in `:domain`, but `:service` does not yet authenticate requests or check permissions.
+  That is a dedicated future iteration.
 - **A shared `Active.cancel()`.** All active phases can be cancelled, but `cancel()` is
   declared per phase. Code holding only an `Active` must use `when` to cancel. Hoisting
   `cancel()` to `Active` would change the public API shape, so leave that for a deliberate
