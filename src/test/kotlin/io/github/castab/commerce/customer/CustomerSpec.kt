@@ -26,6 +26,7 @@ class CustomerSpec :
         test("required text values reject blanks, including through copy") {
             shouldThrow<IllegalArgumentException> { CustomerName("  ") }
             shouldThrow<IllegalArgumentException> { EmailAddress("\t") }
+            shouldThrow<IllegalArgumentException> { PhoneNumber("") }
             shouldThrow<IllegalArgumentException> { CustomerName("Bob").copy(value = " ") }
         }
     })
