@@ -29,12 +29,11 @@ data class PhoneNumber(
     }
 }
 
-/** Minimal durable identity of the person doing business with an application. */
+/** Minimal durable identity of the person doing business with an application; no operational phone number. */
 data class Customer(
     val id: Id,
     val name: CustomerName,
     val email: EmailAddress,
-    val phoneNumber: PhoneNumber,
 ) {
     /** Stable identity shared by bookings and commercial documents. */
     data class Id(

@@ -725,8 +725,8 @@ are no phases such as `CompletedRefunded`, `PartiallyRefunded`, `DepositPaid`,
 ## Customer and booking records
 
 ```text
-CUSTOMER                            Minimal person identity
-(id, name, email, phoneNumber)      Who is the person doing business with us?
+CUSTOMER                            Minimal durable commerce identity
+(id, name, email)                   Who is the person doing business with us?
            │ Customer.Id
       ┌────┴──────────────┐
       ▼                   ▼
@@ -737,16 +737,22 @@ BOOKING              FINANCIAL DOCUMENTS
       └── BookingLocation 0..1  Where does this booking take place?
 ```
 
-`Customer` contains exactly an ID, name, email, and phone number. Its `Customer.Id` is a
-UUID-backed value. It has no address, postal code, booking history, or payment information.
+`Customer` contains exactly an ID, name, and email. Its `Customer.Id` is a
+UUID-backed value. It has no phone number, address, postal code, booking history, or payment information.
 `Booking` identifies the service arrangement and references that customer by ID. The
 application still owns the concrete lifecycle phase models and business transitions.
 
 Each `BookingContact` has its own `BookingContact.Id` and `Booking.Id`.
-`CustomerContact` references an existing `Customer.Id` and copies no name, email, or
-phone. `ExternalContact` describes a different person for this booking without creating
-a customer. It requires a name and at
-least one of email or phone. Several contacts can share a booking ID.
+`CustomerContact` references an existing `Customer.Id`; its name and email resolve through
+that customer. It may hold a separate, optional phone number for this booking.
+`ExternalContact` describes a booking-specific person without creating a customer. It
+requires a name and at least one of email or phone. Several contacts can share a booking ID.
+A phone number on a `BookingContact` is booking-scoped operational contact information and
+is not part of the durable `Customer` identity. The customer and operational contact may be
+the same person or different people. SMS, RCS, voice, and other delivery behavior belongs
+to consuming applications and adapters.
+A booking may exist before any operational contact is established. Whether a quote needs
+one before becoming `Booked` is policy for the consuming application.
 
 `BookingLocation` has its own `BookingLocation.Id`, `Booking.Id`, and `PostalAddress`.
 Region and postal code are optional for places that do not use them; when present, they
@@ -2086,7 +2092,7 @@ uploading anything (for example, a transient error), use **Re-run jobs** on that
 What exists today:
 
 - the minimal `Customer` identity, UUID-backed `Customer.Id`, and validated name,
-  email, and phone value objects;
+  email, and phone value objects (with phone used by booking contacts);
 - the `Booking` to customer association, separate `BookingContact` variants, and
   `BookingLocation` with a postal address;
 - the booking lifecycle protocol: 3 sealed classifications, 5 open phase interfaces, and

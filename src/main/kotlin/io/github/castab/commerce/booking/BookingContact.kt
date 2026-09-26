@@ -16,11 +16,15 @@ sealed interface BookingContact {
         val value: UUID,
     )
 
-    /** A contact resolved through the durable customer identity, without duplicated PII. */
+    /**
+     * The durable customer as an operational contact for this booking. Name and email
+     * resolve through [customerId]; an optional phone number belongs to this booking.
+     */
     data class CustomerContact(
         override val id: Id,
         override val bookingId: Booking.Id,
         val customerId: Customer.Id,
+        val phoneNumber: PhoneNumber? = null,
     ) : BookingContact
 
     /** A booking-specific person who need not become a durable customer. */

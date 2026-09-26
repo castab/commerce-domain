@@ -188,7 +188,7 @@ class BookingLifecycleSpec :
 
         context("direct Quote starting point") {
 
-            test("a Quote can be constructed without an InitialRequest") {
+            test("a Quote can be constructed without an InitialRequest or operational contact") {
                 val quote = TestQuote(requester = "grace", partySize = 2, quotedCents = 7_500)
 
                 quote.shouldBeInstanceOf<BookingLifecycle.Active.Quote>()

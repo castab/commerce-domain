@@ -16,7 +16,7 @@ APIs, shared by multiple applications. Each domain lives in its own package bene
 | Domain | Package | Style |
 |---|---|---|
 | Booking lifecycle | `io.github.castab.commerce.booking.lifecycle` | A type-level protocol. Adopters' own types implement the phases. The library owns no booking data. |
-| Customer identity | `io.github.castab.commerce.customer` | Minimal durable identity: UUID-backed `Customer.Id`, name, email, phone. |
+| Customer identity | `io.github.castab.commerce.customer` | Minimal durable identity: UUID-backed `Customer.Id`, name, email. |
 | Booking records | `io.github.castab.commerce.booking` | Immutable booking-to-customer association and separate operational contact and location records. |
 | Financial documents | `io.github.castab.commerce.financial` | Concrete, library-owned immutable value types (`Estimate`, `Quote`, `Invoice`) whose invariants the library enforces. |
 | Payment reconciliation | `io.github.castab.commerce.payment` | Concrete, library-owned immutable records (payments, allocations, allocation reversals, refunds, refund allocations) and reconciliation derived from records the application supplies. |
@@ -274,15 +274,19 @@ to `InitialRequest`, or similar. An illegal edge must have no method at all.
 
 ## Customer and booking record boundary
 
-`Customer` contains exactly `id`, `name`, `email`, and `phoneNumber`. It holds no
+`Customer` contains exactly `id`, `name`, and `email`. It holds no phone number,
 address, booking history, payment details, or operational contact information. New
 `Customer.Id`, `Booking.Id`, `BookingContact.Id`, and `BookingLocation.Id` types wrap UUIDs
 to keep these peer references distinct. Existing financial/payment record IDs stay raw
 UUIDs; this focused exception does not require a repository-wide identifier migration.
 
 `Booking` holds only `id` and `customerId`. `BookingContact.CustomerContact` holds a
-`customerId` without copying identity PII; `ExternalContact` holds a name and at least
-one contact method without creating a customer. `BookingLocation` holds the postal
+`customerId` and optional `phoneNumber`; name and email resolve through the customer.
+`ExternalContact` holds a name and at least one of email or phone without creating a
+customer. A phone number on a `BookingContact` is booking-scoped operational contact
+information and is not part of the durable `Customer` identity. Do not add contact
+fields to `Customer` merely for correspondence; SMS, RCS, and other delivery capabilities
+belong to consuming applications and adapters. `BookingLocation` holds the postal
 address for one booking. Contacts and locations have independent IDs and contain only a
 booking reference, so applications can remove operational records independently later.
 This library implements neither retention policy nor purging. Applications enforce
