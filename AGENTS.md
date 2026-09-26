@@ -153,12 +153,15 @@ The diagram is conceptual, not a required persistence design.
 `FinancialDocument` is independent of customers, bookings, inquiries, and
 application-specific ownership. Applications persist relationships to financial
 documents externally, typically keyed by the document's `id` or `reference`. Do not add
-generic ownership, reference, recipient, or metadata fields (`customerId`, `ownerId`,
-`subjectId`, `partyId`, `customerReference`, `externalReference`, `contextId`,
-`relationshipId`, `metadata`, ...) to `FinancialDocument` to recreate application
-relationships indirectly. Issuance-time recipient information (`BillTo`,
-`InvoiceRecipient`, ...) is a separate, undecided design question; see
-[Open questions](#open-questions).
+generic ownership, application-relationship reference, recipient, or metadata fields
+(`customerId`, `ownerId`, `subjectId`, `partyId`, `customerReference`,
+`externalReference`, `contextId`, `relationshipId`, `metadata`, ...) to
+`FinancialDocument` to recreate application relationships indirectly. This prohibition
+concerns references that attach application entities to a document, not the document's
+own snapshot references (`FinancialDocumentReference`, `reference`,
+`previousReference`), which are legitimate financial-document concepts and stay as they
+are. Issuance-time recipient information (`BillTo`, `InvoiceRecipient`, ...) is a
+separate, undecided design question; see [Open questions](#open-questions).
 
 ## Booking boundary
 

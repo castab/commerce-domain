@@ -196,7 +196,7 @@ decision (see [`AGENTS.md`](../AGENTS.md#provisional-application-extension-seam)
   > A relationship belongs in `commerce-domain` when one domain concept cannot meaningfully
   > express its semantics or invariants without the other concept. Relationships that
   > coordinate otherwise independently meaningful concepts belong to the consuming
-  > application/runtime layer.
+  > application layer.
 
 - Where the domain already defines a boundary contract (for example the
   `FinancialDocumentHistory` SPI or the staff resolver ports), the runtime implements that

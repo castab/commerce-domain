@@ -786,8 +786,10 @@ application's own records. Once the runtime persists commerce facts, an applicat
 be able to write its inquiry, the estimate, and the relationship between them in one
 transaction, without either generic module knowing about the relationship.
 
-The library deliberately offers no generic owner, party, subject, reference, context, or
-metadata field on its types to hold such relationships. Business-specific data stays
+The library deliberately offers no generic owner, party, subject, application-relationship
+reference, context, or metadata field on its types to hold such relationships. (This does
+not concern the library's own document references, `FinancialDocumentReference` and
+`previousReference`, which identify financial-document snapshots.) Business-specific data stays
 strongly typed in the application.
 
 ## Financial documents
@@ -1838,7 +1840,7 @@ val permissionResolver = RoleBasedPermissionResolver(principalResolver, roleReso
 
 stripeAdapter.id.can(CommercePermissions.PaymentRecord, permissionResolver) // true
 stripeAdapter.id.can(CommercePermissions.UserManage, permissionResolver)    // false
-userId.can(EmailRespond, permissionResolver)                                // same API for a human
+userId.can(MessageRespond, permissionResolver)                              // same API for a human
 ```
 
 Here `usersById`, `servicesById`, and `rolesByKey` represent application-owned sources,
