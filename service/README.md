@@ -122,6 +122,33 @@ shared `CommerceRuntime` (the `Transactor` and the commerce repositories). This 
 application's writes and commerce writes share one transaction. The service still owns
 the error handling around every route.
 
+### Provisional extension seam
+
+`ApplicationContributions` and `CommerceRuntime` are the **provisional**
+application-extension seam. They are enough for an application to run on the shared
+runtime today, but they are not the settled extension contract. Expect them to change,
+without a long deprecation period, once the [booking extension](#booking-extension-direction)
+and further capabilities are designed from the requirements of real consumers. New
+contribution points or runtime members are added only when a concrete consumer needs
+them.
+
+### Infrastructure types in the public API
+
+Some JDBI and HikariCP types are deliberately part of the public API:
+
+| Public member | Exposed type | Why |
+|---|---|---|
+| `Transaction.handle` | `org.jdbi.v3.core.Handle` | Lets application repositories write inside the same transaction as commerce repositories. |
+| `createDataSource(...)` | `com.zaxxer.hikari.HikariDataSource` | The service's connection pool, for application tooling that needs the same pool configuration. |
+
+For that reason `jdbi3-core` and `HikariCP` are `api` dependencies, alongside `http4k-core`,
+`http4k-format-kotlinx-serialization`, and `kotlinx-serialization-json`. This exposure
+follows from the opinionated PostgreSQL/JDBI stack and is **intentional but revisitable**.
+A later iteration may narrow it, for example by wrapping the handle in a commerce-owned
+type. Code against it knowingly. It will not be expanded casually: Flyway, Jetty, and
+Hoplite stay internal, and any further infrastructure exposure is a deliberate, documented
+decision (see [`AGENTS.md`](../AGENTS.md#provisional-application-extension-seam)).
+
 ## Runtime conventions
 
 ### Configuration
@@ -286,8 +313,12 @@ service will own it as an application-level relationship.
   depend on a provider SDK.
 - No deployable packaging. Applications build their own runnable jar (for example with
   the Shadow plugin) and image. This library publishes a plain jar.
-- `ApplicationContributions` covers routes and migrations only. Other contribution
-  points will be added when a concrete consumer needs them.
+- `ApplicationContributions` covers routes and migrations only, and together with
+  `CommerceRuntime` it is provisional (see [Provisional extension seam](#provisional-extension-seam)).
+  Other contribution points will be added when a concrete consumer needs them.
+- JDBI (`Handle`) and HikariCP (`HikariDataSource`) types are exposed in the public API.
+  This is intentional but may be narrowed later; see
+  [Infrastructure types in the public API](#infrastructure-types-in-the-public-api).
 
 ## Tests
 

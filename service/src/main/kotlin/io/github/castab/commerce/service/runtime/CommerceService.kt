@@ -28,6 +28,8 @@ private val logger = KotlinLogging.logger {}
  * The shared runtime pieces an application may build on: the transaction boundary and the
  * commerce repositories. Application code that must write its own tables and commerce
  * tables atomically uses the same [transactor] and passes one transaction to both.
+ *
+ * Part of the provisional application-extension seam; see [ApplicationContributions].
  */
 class CommerceRuntime internal constructor(
     val configuration: CommerceServiceConfiguration,
@@ -40,7 +42,12 @@ class CommerceRuntime internal constructor(
  *
  * This is deliberately small and not booking-specific. It is the seam through which
  * application-owned capabilities (including a future, strongly typed booking extension)
- * plug into the shared runtime without forking it:
+ * plug into the shared runtime without forking it.
+ *
+ * Together with [CommerceRuntime], this is the provisional application-extension seam, not
+ * a settled contract: it is expected to change once the booking extension and further
+ * capabilities are designed from real consumer requirements, and it grows only when a
+ * concrete consumer needs it.
  *
  * @property migrationLocations Flyway locations of the application's own migrations, run
  *   after the commerce migrations. See [DatabaseMigrations].

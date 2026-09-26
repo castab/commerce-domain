@@ -77,6 +77,39 @@ frameworks. The service rules are:
 - Composition is explicit in `commerceService(...)`. No DI framework, no annotation
   scanning.
 
+## Provisional application-extension seam
+
+`ApplicationContributions` (Flyway locations and routes) and `CommerceRuntime` (the
+configuration, `Transactor`, and commerce repositories handed to contributed routes) are
+the **provisional** application-extension seam. They let a consuming application run on
+the shared runtime today, and they are expected to change once the booking extension and
+the other capabilities are designed from real consumer requirements. Treat them
+accordingly:
+
+- Do not treat either type as the settled extension contract, and do not build the future
+  booking extension by piling fields or callbacks onto them.
+- Add a contribution point or a `CommerceRuntime` member only when a concrete consumer
+  needs it. Say in the change which consumer, and why the existing seam is insufficient.
+- Prefer exposing application operations and repositories that stay stable over exposing
+  more infrastructure.
+
+**Infrastructure types in the public API.** The service's public API currently exposes
+JDBI and HikariCP types: `Transaction.handle` (`org.jdbi.v3.core.Handle`), so that
+application repositories can join a commerce transaction, and `createDataSource`
+(`com.zaxxer.hikari.HikariDataSource`). That is why `jdbi3-core` and `HikariCP` are `api`
+dependencies. This exposure is **intentional but revisitable**. It is a deliberate
+consequence of the opinionated PostgreSQL/JDBI stack, not a precedent for leaking more
+infrastructure.
+
+- Do not casually expand it. Do not add public members that expose `Jdbi`, `Handle`,
+  `HikariDataSource`, Flyway, Jetty, or Hoplite types, and do not promote an
+  `implementation` dependency to `api`, without stating why in the change and updating
+  this section and `service/README.md`.
+- Keep new infrastructure types internal or private by default.
+- A future iteration may narrow this surface, for example by wrapping the handle in a
+  commerce-owned repository-facing type. Do not make changes that would make such a
+  narrowing harder without a reason.
+
 ## Known-use-case generalization
 
 Generalize from the known consumers: catering, mobile detailing, computer repair,
@@ -772,7 +805,10 @@ MongoDB drivers  Jackson  kotlinx.serialization  Logback  kotlin-logging  NATS  
 **`:service`.** The runtime stack is fixed: http4k (core, Jetty server, kotlinx-serialization
 format), kotlinx.serialization, HikariCP, JDBI, the PostgreSQL driver, Flyway, Hoplite
 (HOCON), Kotlin Logging, and Logback. A library whose types appear in the service's public
-API is an `api` dependency; everything else is `implementation` or `runtimeOnly`. Never
+API is an `api` dependency; everything else is `implementation` or `runtimeOnly`. The
+current `api` set (http4k core and its kotlinx-serialization format, kotlinx.serialization,
+JDBI, HikariCP) is deliberate but revisitable. Do not grow it casually; see
+[Provisional application-extension seam](#provisional-application-extension-seam). Never
 add Spring, Spring Boot, Hibernate, JPA, Micronaut, Quarkus, Ktor, a dependency-injection
 framework, or a payment-provider SDK (Stripe or any other).
 
