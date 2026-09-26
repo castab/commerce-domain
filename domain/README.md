@@ -7,9 +7,10 @@ multiple applications can share.
 
 It is the `:domain` module of the [`commerce`](../README.md) project and is published and
 consumed on its own. It does not depend on
-[`commerce-service`](../service/README.md), and it never brings in HTTP, persistence,
+[`commerce-runtime`](../runtime/README.md), and it never brings in HTTP, persistence,
 serialization, configuration, or logging libraries. A payment adapter, for example,
-can depend on `commerce-domain` alone.
+can depend on `io.github.castab:commerce-domain` alone without acquiring
+`commerce-runtime`, http4k, Jetty, JDBI, HikariCP, Flyway, or PostgreSQL.
 
 > **Requires Java 25.** The library is compiled to Java 25 bytecode, tested on Java 25,
 > and requires a Java 25 or newer runtime. Older JVMs are not supported. See
@@ -57,7 +58,7 @@ is `kotlin-stdlib`.
 - [Building and testing](#building-and-testing)
 - [Releasing](#releasing)
 - [Current scope](#current-scope)
-- [Relationship to commerce-service](#relationship-to-commerce-service)
+- [Relationship to commerce-runtime](#relationship-to-commerce-runtime)
 - [License](#license)
 
 ## Installation
@@ -68,7 +69,7 @@ Releases are published to **GitHub Packages** as a Maven artifact:
 |---|---|
 | Coordinates | `io.github.castab:commerce-domain:<version>` |
 | Repository | `https://maven.pkg.github.com/castab/commerce` (the GitHub repository that publishes the package) |
-| Versions | [GitHub Releases](https://github.com/castab/commerce/releases). A release tagged `v0.0.1` is published as version `0.0.1`. `commerce-domain` and `commerce-service` are always released together at the same version. |
+| Versions | [GitHub Releases](https://github.com/castab/commerce/releases). A release tagged `v0.0.1` is published as version `0.0.1`. `commerce-domain` and `commerce-runtime` are always released together at the same version. |
 
 A consuming build needs **both** the repository declaration and the dependency.
 `mavenCentral()` alone is not enough.
@@ -2033,7 +2034,7 @@ The Java 25 requirement is intentional. Do not expect a build targeting 17 or 21
 
 Versions are declared in [`gradle/libs.versions.toml`](../gradle/libs.versions.toml). The
 module build is [`domain/build.gradle.kts`](build.gradle.kts), and the conventions it
-shares with `:service` are in the root [`build.gradle.kts`](../build.gradle.kts).
+shares with `:runtime` are in the root [`build.gradle.kts`](../build.gradle.kts).
 
 ## Building and testing
 
@@ -2052,7 +2053,7 @@ On Windows:
 `:domain:build` compiles the library, runs its test suite and ktlint checks, and assembles
 the main, sources, and javadoc jars. It also runs `verifyRuntimeDependencies`, which fails
 if the module's runtime classpath ever contains anything beyond `kotlin-stdlib`. It needs
-neither Docker nor a database, and it does not build `:service`. It publishes nothing and
+neither Docker nor a database, and it does not build `:runtime`. It publishes nothing and
 needs no GitHub credentials. Local builds use the version `0.0.0-SNAPSHOT`.
 
 Tests are written with [Kotest](https://kotest.io) 6.2.5 (`FunSpec`, Kotest assertions) on
@@ -2068,7 +2069,7 @@ whole-project build are described in the [root README](../README.md#building-and
 
 ## Releasing
 
-`commerce-domain` is released together with `commerce-service` from one GitHub Release. See
+`commerce-domain` is released together with `commerce-runtime` from one GitHub Release. See
 [Releasing](../README.md#releasing). **Published versions are immutable.** If `0.0.1` has
 a problem, fix it and release `0.0.2`.
 
@@ -2103,16 +2104,27 @@ What does not exist here: persistence implementations, serialization, events, fr
 integrations, payment-processor integrations, store credit, accounting ledgers, Maven
 Central publishing.
 
-## Relationship to commerce-service
+## Relationship to commerce-runtime
 
-The application machinery built on these types lives in the sibling
-[`commerce-service`](../service/README.md) artifact: HTTP, PostgreSQL persistence,
-transactions, configuration, and orchestration. The dependency points one way:
-`commerce-service` depends on `commerce-domain`, and `commerce-domain` never depends on
-`commerce-service`.
+```text
+commerce-domain                  (this artifact)
+      │
+      ▼
+commerce-runtime                 (opinionated runtime machinery, a library)
+      │
+      ▼
+concrete commerce application    (owns main() and the process)
+```
+
+The machinery for assembling applications on these types lives in the sibling
+[`commerce-runtime`](../runtime/README.md) artifact: HTTP on http4k and Jetty,
+PostgreSQL persistence, transactions, configuration, and orchestration. Concrete
+applications depend on `commerce-runtime`. The dependency points one way:
+`commerce-runtime` depends on `commerce-domain`, and `commerce-domain` never depends on
+`commerce-runtime`.
 
 Some relationships only coordinate concepts that are each meaningful on their own, such
-as which financial document belongs to which booking. `commerce-service` or the consuming
+as which financial document belongs to which booking. `commerce-runtime` or the concrete
 application owns those, not this library. The domain semantics documented here stay
 persistence-agnostic. Persistence adapters build on them without changing the model.
 

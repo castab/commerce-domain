@@ -54,10 +54,10 @@ jobs:
       - name: Domain tests
         run: ./gradlew :domain:test --no-build-cache
 
-      # The service specs run against a real PostgreSQL that Gradle starts through the
+      # The runtime specs run against a real PostgreSQL that Gradle starts through the
       # runner's Docker CLI and removes afterwards; no service container is declared here.
-      - name: Service tests
-        run: ./gradlew :service:test --no-build-cache
+      - name: Runtime tests
+        run: ./gradlew :runtime:test --no-build-cache
 
       # Everything else in `build`: jars for both artifacts, the domain dependency-boundary
       # check, and all remaining verification. Tests that already ran above are up to date.

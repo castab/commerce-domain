@@ -10,98 +10,119 @@ next ones. It has two independently consumable modules:
 commerce
 │
 ├── commerce-domain        (Gradle project :domain)
-│   Pure Kotlin commerce vocabulary and invariants.
+│
+│   Reusable commerce vocabulary and invariants.
 │   Depends on kotlin-stdlib only. Can be consumed independently.
 │
-└── commerce-service       (Gradle project :service)
-    Opinionated reusable commerce application/runtime layer:
+└── commerce-runtime       (Gradle project :runtime)
+    Opinionated runtime/application machinery used
+    to construct concrete commerce applications:
     http4k on Jetty, PostgreSQL through HikariCP, JDBI, and Flyway,
     kotlinx.serialization, Hoplite configuration, explicit composition.
-    Depends on commerce-domain.
+    Depends on commerce-domain. A library, not an application.
 ```
 
 | Artifact | Coordinates | Documentation |
 |---|---|---|
 | commerce-domain | `io.github.castab:commerce-domain:<version>` | [domain/README.md](domain/README.md) |
-| commerce-service | `io.github.castab:commerce-service:<version>` | [service/README.md](service/README.md) |
+| commerce-runtime | `io.github.castab:commerce-runtime:<version>` | [runtime/README.md](runtime/README.md) |
 
 > **Requires Java 25.** Both artifacts are compiled to Java 25 bytecode, tested on Java 25,
 > and require a Java 25 or newer runtime.
 
-## Why two modules
-
-The two modules keep durable commerce concepts apart from the machinery that deploys
-them:
-
-1. **Domain.** `commerce-domain` holds the concepts and their invariants: customers,
-   bookings and the booking lifecycle, estimates, quotes, and invoices, payments,
-   allocations, refunds, reconciliation, the provider-neutral payment adapter contract,
-   and principals, roles, and permissions. It knows nothing about HTTP, databases,
-   serialization, or frameworks.
-2. **Service.** `commerce-service` is reusable application and runtime machinery that
-   composes those concepts into deployable commerce systems: application operations,
-   transactions, PostgreSQL persistence, HTTP conventions, errors, health, and
-   configuration.
+## Three layers, two modules
 
 ```text
-                         commerce
-                            │
-              ┌─────────────┴─────────────┐
-              │                           │
-              ▼                           ▼
-           domain                       service
-              │                           │
-     commerce concepts            application/runtime
-     and invariants                  orchestration
-              │                           │
-              │                    HTTP + persistence
-              │                           │
-              └───────────────◄───────────┘
-                        service depends
-                          on domain
+commerce-domain                  (this repository)
+      │
+      ▼
+commerce-runtime                 (this repository)
+      │
+      ▼
+concrete commerce application    (the consuming project)
 ```
 
-The dependency points one way: `:service` → `:domain`, never the reverse. The build
+1. **Domain.** `commerce-domain` holds the reusable concepts, facts, invariants, and
+   protocols: customers, bookings and the booking lifecycle, estimates, quotes, and
+   invoices, payments, allocations, refunds, reconciliation, the provider-neutral payment
+   adapter contract, and principals, roles, and permissions. It knows nothing about HTTP,
+   databases, serialization, or frameworks.
+2. **Runtime.** `commerce-runtime` is the opinionated, reusable machinery from which a
+   commerce application is assembled: operations, transactions, PostgreSQL persistence,
+   HTTP on http4k and Jetty, errors, health, the configuration model and its loader,
+   commerce repositories and routes, and application contribution points. It is a
+   library. It is not itself an application, and it provides no default application and
+   no `main()`. It defines the configuration it requires but ships no `application.conf`,
+   and it emits logs but ships no logging configuration.
+3. **Concrete application.** The consuming project, for example Fiona's catering
+   application or a detailing, repair, pet salon, or point-of-sale application. It
+   depends on `commerce-runtime` and supplies its business-specific behavior and details
+   through explicit `ApplicationContributions`. It owns `main()` and its process
+   lifecycle, its deployment configuration (`application.conf` and environment), and its
+   logging configuration (`logback.xml`), and it creates and starts the runtime.
+
+The module dependency points one way: `:runtime` → `:domain`, never the reverse. The build
 enforces it. `:domain`'s `check` fails if its runtime classpath ever contains anything
 beyond `kotlin-stdlib`.
 
 ## Intended usage
 
 ```text
+Catering Application           Detailing Application          POS Application
+  (owns main())                  (owns main())                  (owns main())
+        │                              │                              │
+        ▼                              ▼                              ▼
+commerce-runtime               commerce-runtime               commerce-runtime
+        │                              │                              │
+        ▼                              ▼                              ▼
+commerce-domain                commerce-domain                commerce-domain
+
 Payment adapter (e.g. a future stripe-adapter)
-  └── commerce-domain
+        │
+        ▼
+commerce-domain
+```
 
-Point-of-sale application
-  └── commerce-service
-       └── commerce-domain
+Each concrete application composes the runtime in its own entry point:
 
-Catering application
-  └── commerce-service
-       ├── commerce-domain
-       └── application-specific booking extension (owned by the application)
+```kotlin
+// In the catering (or detailing, or POS) application's own project.
+fun main() {
+    val runtime =
+        commerceRuntime(
+            configuration = CommerceRuntimeConfiguration.load(),
+            application =
+                ApplicationContributions(
+                    migrationLocations = listOf("classpath:db/migration"),
+                    routes = { context -> cateringRoutes(context) },
+                ),
+        )
 
-Detailing application
-  └── commerce-service
-       ├── commerce-domain
-       └── application-specific booking extension (owned by the application)
+    runtime.start()
+
+    // The application owns its process lifecycle from here.
+    Runtime.getRuntime().addShutdownHook(Thread { runtime.close() })
+    Thread.currentThread().join()
+}
 ```
 
 - **An adapter** that only needs the shared vocabulary, such as the provider-neutral
-  payment contract, depends on `commerce-domain` alone. It never picks up http4k, Jetty,
-  JDBI, HikariCP, PostgreSQL, Flyway, or Hoplite.
-- **An application** depends on `commerce-service`. It writes a small `main` that loads
-  configuration and calls `commerceService(configuration, contributions)`, adding its own
-  routes and migrations. It does not fork or copy the service.
+  payment contract, depends on `commerce-domain` alone. It never picks up
+  `commerce-runtime`, http4k, Jetty, JDBI, HikariCP, PostgreSQL, Flyway, or Hoplite.
+- **An application** depends on `commerce-runtime`, writes its own `main`, and calls
+  `commerceRuntime(configuration, application)` with its explicit contributions. It does
+  not fork or copy the runtime. The runtime has no default application, so even an
+  application with nothing to add passes `ApplicationContributions()` deliberately.
 - **Booking is optional.** Booking is one commerce capability, not the root of commerce. A
   point-of-sale application uses customers, invoices, payments, allocations, refunds, and
   reconciliation without ever creating a booking.
 
-`commerce-service` does **not** define `CateringBooking`, `DetailingBooking`,
+`commerce-runtime` does **not** define `CateringBooking`, `DetailingBooking`,
 `RepairBooking`, `GroomingBooking`, or any other business-specific booking model. Neither
 module will. Those types belong to the applications that need them. The next design step
 is a strongly typed, compile-time **booking extension seam** that lets each application
 supply its own booking details while reusing the generic machinery. See
-[service/README.md](service/README.md#booking-extension-direction).
+[runtime/README.md](runtime/README.md#booking-extension-direction).
 
 ## Installation
 
@@ -110,7 +131,7 @@ Releases are published to **GitHub Packages**:
 | | |
 |---|---|
 | Repository | `https://maven.pkg.github.com/castab/commerce` |
-| Versions | [GitHub Releases](https://github.com/castab/commerce/releases). Both artifacts share one version: a release tagged `v0.1.0` publishes `commerce-domain:0.1.0` and `commerce-service:0.1.0`. |
+| Versions | [GitHub Releases](https://github.com/castab/commerce/releases). Both artifacts share one version: a release tagged `v0.1.0` publishes `commerce-domain:0.1.0` and `commerce-runtime:0.1.0`. |
 
 ```kotlin
 repositories {
@@ -128,10 +149,11 @@ repositories {
 }
 
 dependencies {
-    // Either the domain alone...
+    // Either the domain alone (for example, in a payment adapter)...
     implementation("io.github.castab:commerce-domain:0.1.0")
-    // ...or the service, which brings the same version of commerce-domain with it.
-    implementation("io.github.castab:commerce-service:0.1.0")
+    // ...or the runtime (in a concrete application), which brings the same version of
+    // commerce-domain with it.
+    implementation("io.github.castab:commerce-runtime:0.1.0")
 }
 ```
 
@@ -139,7 +161,7 @@ GitHub Packages requires authentication even to download public packages. See
 [Authentication](domain/README.md#authentication-is-required-even-for-public-packages).
 
 To build against an unreleased checkout, include it as a composite build. Gradle matches
-included projects by project name (`domain`, `service`), not by artifactId, so map the
+included projects by project name (`domain`, `runtime`), not by artifactId, so map the
 coordinates explicitly:
 
 ```kotlin
@@ -147,7 +169,7 @@ coordinates explicitly:
 includeBuild("../commerce") {
     dependencySubstitution {
         substitute(module("io.github.castab:commerce-domain")).using(project(":domain"))
-        substitute(module("io.github.castab:commerce-service")).using(project(":service"))
+        substitute(module("io.github.castab:commerce-runtime")).using(project(":runtime"))
     }
 }
 ```
@@ -156,7 +178,7 @@ includeBuild("../commerce") {
 
 ```text
 commerce/
-├── settings.gradle.kts       rootProject "commerce"; include("domain", "service")
+├── settings.gradle.kts       rootProject "commerce"; include("domain", "runtime")
 ├── build.gradle.kts          shared conventions: Java 25, Kotlin, ktlint, tests, publishing
 ├── gradle.properties
 ├── gradle/libs.versions.toml all versions, for both modules
@@ -164,14 +186,15 @@ commerce/
 │   ├── build.gradle.kts
 │   ├── README.md
 │   └── src/{main,test}/kotlin/io/github/castab/commerce/...
-└── service/                  commerce-service
+└── runtime/                  commerce-runtime (a library; no executable)
     ├── build.gradle.kts
     ├── README.md
     └── src/{main,test}/{kotlin,resources}
 ```
 
-Package names are stable across the restructuring. The domain stays in
-`io.github.castab.commerce.*` and the service lives in `io.github.castab.commerce.service.*`.
+The domain lives in `io.github.castab.commerce.*` (booking, customer, financial, payment,
+staff), and the runtime lives in `io.github.castab.commerce.runtime.*`. There is no
+executable module in this repository: concrete applications live in their own projects.
 
 ## Requirements
 
@@ -180,7 +203,7 @@ Package names are stable across the restructuring. The domain stays in
 | Java | **25** | Hard requirement for building, testing, and running both modules. Toolchain auto-download is disabled, so a missing JDK 25 fails the build. |
 | Kotlin | 2.4.20 | |
 | Gradle | 9.7.0 | Pinned through the wrapper (with checksum): the newest Gradle that Kotlin 2.4.20 declares full support for. |
-| Docker | any recent | Only for `:service` tests, which start a throwaway PostgreSQL 18 container. Not needed to build or test `:domain`. |
+| Docker | any recent | Only for `:runtime` tests, which start a throwaway PostgreSQL 18 container. Not needed to build or test `:domain`. |
 
 Versions are declared in [`gradle/libs.versions.toml`](gradle/libs.versions.toml).
 
@@ -206,12 +229,12 @@ Module-specific commands:
 | Command | What it does |
 |---|---|
 | `./gradlew :domain:build` | Builds and tests `commerce-domain` alone. No Docker, no database. |
-| `./gradlew :service:test` | Runs the service specs against real PostgreSQL (see below). |
+| `./gradlew :runtime:test` | Runs the runtime specs against real PostgreSQL (see below). |
 | `./gradlew ktlintCheck` | Checks Kotlin sources and Gradle Kotlin scripts of every project. |
 | `./gradlew ktlintFormat` | Formats them. |
 | `./gradlew :domain:dependencies --configuration runtimeClasspath` | Shows that the domain resolves `kotlin-stdlib` only. |
 
-**Service tests and PostgreSQL.** The first `:service` test run starts a
+**Runtime tests and PostgreSQL.** The first `:runtime` test run starts a
 `postgres:18-alpine` container through the plain Docker CLI, then removes it when the build
 ends, even if tests fail. Each database spec creates its own database and applies the real
 Flyway migrations. There is no H2, no Testcontainers, and no separate test schema. To use
@@ -228,7 +251,7 @@ The build cache is enabled. To force tests to run again, add `--no-build-cache` 
 `--rerun`).
 
 The [CI workflow](.github/workflows/ci.yml) runs on Java 25 (Temurin) for every pull
-request and every push to `main`. Its steps are ktlint, domain tests, service tests, and
+request and every push to `main`. Its steps are ktlint, domain tests, runtime tests, and
 then the full build.
 
 ## Releasing
@@ -241,8 +264,8 @@ publishes both artifacts at the same version.
    `v0.1.0`. Prerelease suffixes such as `v0.2.0-alpha.1` are also accepted.
 3. Publishing the release triggers the [Publish workflow](.github/workflows/publish.yml).
    It validates the tag and runs `./gradlew clean build` on Java 25.
-4. If every check passes, the workflow publishes `commerce-domain` and `commerce-service`
-   at the version without the `v` to GitHub Packages. The published `commerce-service`
+4. If every check passes, the workflow publishes `commerce-domain` and `commerce-runtime`
+   at the version without the `v` to GitHub Packages. The published `commerce-runtime`
    POM depends on `commerce-domain` at that same version. If the tag is malformed or any
    check fails, nothing is published.
 
@@ -257,7 +280,7 @@ anything, use **Re-run jobs** on that run.
 ## Contributing
 
 The architectural rules are in [`AGENTS.md`](AGENTS.md): module boundaries, domain
-invariants, service conventions, and build and publication rules. Read it before changing
+invariants, runtime conventions, and build and publication rules. Read it before changing
 either module.
 
 ## License

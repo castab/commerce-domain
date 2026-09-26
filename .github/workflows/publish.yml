@@ -59,7 +59,7 @@ jobs:
       - name: Show Gradle and JVM versions
         run: ./gradlew --version
 
-      # Full verification of both modules first (the service tests start PostgreSQL through
+      # Full verification of both modules first (the runtime tests start PostgreSQL through
       # the runner's Docker CLI). If any check fails, the job stops here and nothing is
       # published. --no-build-cache forces the tests to execute.
       - name: Build and test
@@ -68,7 +68,7 @@ jobs:
         run: ./gradlew clean build --no-build-cache
 
       # Publishes both artifacts at the same version: io.github.castab:commerce-domain
-      # and io.github.castab:commerce-service (which depends on that commerce-domain).
+      # and io.github.castab:commerce-runtime (which depends on that commerce-domain).
       - name: Publish to GitHub Packages
         env:
           ORG_GRADLE_PROJECT_version: ${{ steps.version.outputs.version }}

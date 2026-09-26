@@ -1,11 +1,11 @@
 # AGENTS.md
 
 The architectural contract for contributors and coding agents working in this repository.
-Read this before changing anything under `domain/src/main` or `service/src/main`, and
+Read this before changing anything under `domain/src/main` or `runtime/src/main`, and
 before adding a dependency, a module, or a lifecycle concept.
 
 [`README.md`](README.md) introduces the project, [`domain/README.md`](domain/README.md)
-and [`service/README.md`](service/README.md) introduce each artifact to adopters. This file
+and [`runtime/README.md`](runtime/README.md) introduce each artifact to adopters. This file
 explains the rules and why seemingly reasonable changes can be architecturally wrong.
 
 # Project architecture
@@ -15,15 +15,64 @@ explains the rules and why seemingly reasonable changes can be architecturally w
 | Gradle project | Published artifact | Role |
 |---|---|---|
 | `:domain` | `io.github.castab:commerce-domain` | Pure commerce vocabulary and invariants. Depends on `kotlin-stdlib` only. |
-| `:service` | `io.github.castab:commerce-service` | Opinionated, reusable application/runtime layer: http4k on Jetty, PostgreSQL via HikariCP, JDBI, and Flyway, kotlinx.serialization, Hoplite configuration, transactions, HTTP conventions, explicit composition. |
+| `:runtime` | `io.github.castab:commerce-runtime` | Opinionated, reusable runtime from which concrete commerce applications are assembled: http4k on Jetty, PostgreSQL via HikariCP, JDBI, and Flyway, kotlinx.serialization, Hoplite configuration, transactions, HTTP conventions, explicit composition. A library, not an application. |
 
-The root project coordinates shared build configuration and contains no sources.
+The root project coordinates shared build configuration and contains no sources. There
+is no executable module in this repository.
+
+```text
+commerce-domain                  vocabulary, facts, invariants, protocols
+      │
+      ▼
+commerce-runtime                 reusable, opinionated runtime machinery (a library)
+      │
+      ▼
+concrete commerce application    the consuming project: owns main() and the process
+```
 
 These rules are non-negotiable without an explicit decision from the maintainer.
 
+## Runtime identity
+
+`commerce-runtime` is a reusable library/runtime, not a concrete application. It must not
+define a default business application or own a production `main()` entry point. Concrete
+applications depend on the runtime, explicitly provide application contributions and
+extensions, and own their executable and process lifecycle.
+
+- `:runtime` applies `java-library`, never Gradle's `application` plugin. There is no
+  `./gradlew :runtime:run`.
+- Do not introduce generic development executables into `commerce-runtime` (a
+  `DevelopmentServer`, `RuntimeMain`, `CommerceMain`, `DefaultCommerceApplication`,
+  `DemoApplication`, or any other `main()`) merely to make the runtime directly runnable.
+  Verify runtime composition through tests or concrete consuming applications. Do not add
+  an `app/`, `server/`, `runner/`, or example-application module to this repository
+  without an explicit decision.
+- `commerceRuntime(configuration, application)` has no default for `application`. Never
+  add one: the runtime plus configuration alone is not an application, and every consumer
+  must state its contributions, even when that is `ApplicationContributions()`.
+- The runtime may start and stop the resources it creates (Jetty, the connection pool) when
+  a concrete application invokes it. It does not own the process: no shutdown hooks, no
+  blocking of the calling thread, no command-line handling.
+- Application-specific concepts, such as catering, detailing, repair, grooming, or
+  point-of-sale semantics, belong to concrete consuming applications, not
+  `commerce-runtime`.
+- **Configuration ownership.** `commerce-runtime` defines the configuration it requires
+  (`CommerceRuntimeConfiguration`: model, defaults, validation) and may provide loading
+  machinery (`CommerceRuntimeConfiguration.load()`). The concrete application supplies
+  the deployment configuration: its `application.conf` and environment. Never ship an
+  `application.conf` (or any other deployment configuration) in the runtime's
+  `src/main/resources`.
+- **Logging ownership.** `commerce-runtime` emits logs through the logging API (Kotlin
+  Logging on SLF4J) but does not configure the consuming application's logging system.
+  Never ship a `logback.xml`, `logback-test.xml`, or other logging configuration in the
+  runtime's `src/main/resources`. The concrete application owns logging configuration.
+- The runtime's `src/main/resources` holds only runtime-owned artifacts: its Flyway
+  migrations in `db/commerce/`. Configuration and logging resources that tests need live
+  in `runtime/src/test/resources` and are never published.
+
 ## Dependency direction
 
-`:service` may depend on `:domain`. `:domain` must never depend on `:service`, directly or
+`:runtime` may depend on `:domain`. `:domain` must never depend on `:runtime`, directly or
 transitively. Within the build the dependency is `api(project(":domain"))`. It is never
 resolved from GitHub Packages.
 
@@ -32,9 +81,9 @@ resolved from GitHub Packages.
 Do not introduce HTTP, persistence, serialization, configuration, logging, framework, or
 deployment concerns into `:domain`. A consumer such as a payment adapter must be able to
 depend on `commerce-domain` without acquiring http4k, Jetty, JDBI, HikariCP, PostgreSQL,
-Flyway, Hoplite, or any other service-runtime infrastructure. `:domain:check` enforces this
+Flyway, Hoplite, `commerce-runtime`, or any other runtime infrastructure. `:domain:check` enforces this
 through `verifyRuntimeDependencies`. Do not annotate or alter domain types to make HTTP
-serialization or persistence convenient; translate explicitly in `:service`.
+serialization or persistence convenient; translate explicitly in `:runtime`.
 
 ## Semantic preservation
 
@@ -50,50 +99,56 @@ work (moving files, changing builds) must not redesign domain semantics.
 A relationship belongs in `commerce-domain` when one domain concept cannot meaningfully
 express its semantics or invariants without the other concept. Relationships that
 coordinate otherwise independently meaningful concepts belong to the consuming
-application/service layer. Do not add relationships to `commerce-domain` merely because
-`commerce-service` commonly coordinates those concepts. Booking and financial documents,
-for example, stay independent in the domain. `:service` may establish and persist their
+application/runtime layer. Do not add relationships to `commerce-domain` merely because
+`commerce-runtime` commonly coordinates those concepts. Booking and financial documents,
+for example, stay independent in the domain. `:runtime` may establish and persist their
 association.
 
-## Service opinionation
+## Runtime opinionation
 
-It is acceptable, and intended, for `commerce-service` to establish conventions around
+It is acceptable, and intended, for `commerce-runtime` to establish conventions around
 http4k, Jetty, PostgreSQL, JDBI, Flyway, kotlinx.serialization, Hoplite, transactions, and
 HTTP behavior. Do not weaken useful abstractions to support hypothetical alternative
-frameworks. The service rules are:
+frameworks. The runtime rules are:
 
-- Routes translate only: request DTO → domain values → one application operation →
-  response DTO. No SQL and no orchestration in routes.
-- Application operations orchestrate and own the transaction boundary through
-  `Transactor`. Repositories take the caller's `Transaction`.
+- Routes translate only: request DTO → domain values → one operation → response DTO. No
+  SQL and no orchestration in routes.
+- Operations (use cases such as `CreateCustomer`) orchestrate and own the transaction
+  boundary through `Transactor`. Repositories take the caller's `Transaction`. Operation
+  support (`CommerceFailure`, `validating`) lives in `io.github.castab.commerce.runtime.operation`.
+  In this repository, "application" means the concrete consuming application; do not use
+  it to name runtime packages or runtime concepts.
 - Expected failures are `CommerceFailure` subclasses, whose messages are written for
   callers. `CommerceErrorHandling` maps every failure to the documented
   `{"code", "message"}` contract. SQL, stack traces, and implementation detail never reach
   a response.
-- Transport DTOs are `@Serializable` classes in `:service`, serialized through
+- Transport DTOs are `@Serializable` classes in `:runtime`, serialized through
   `CommerceJson`.
 - Configuration is HOCON through Hoplite plus explicit, documented environment overrides.
-  Never commit secrets.
-- Composition is explicit in `commerceService(...)`. No DI framework, no annotation
-  scanning.
+  The application supplies the file; the runtime ships none. Never commit secrets.
+- Composition is explicit in `commerceRuntime(...)`. No DI framework, no annotation
+  scanning. It composes the commerce capabilities with the caller's explicit
+  `ApplicationContributions`.
 
 ## Provisional application-extension seam
 
-`ApplicationContributions` (Flyway locations and routes) and `CommerceRuntime` (the
+`ApplicationContributions` (Flyway locations and routes) and `CommerceRuntimeContext` (the
 configuration, `Transactor`, and commerce repositories handed to contributed routes) are
-the **provisional** application-extension seam. They let a consuming application run on
+the **provisional** application-extension seam. They let a concrete application run on
 the shared runtime today, and they are expected to change once the booking extension and
-the other capabilities are designed from real consumer requirements. Treat them
-accordingly:
+the other capabilities are designed from real consumer requirements. Whether the seam
+becomes a `CommerceApplication`, a `CommerceExtension`, or a `BookingExtension<B>` is
+undecided. `ApplicationContributions` must stay broader than booking: a point-of-sale
+application contributes no booking functionality. Treat them accordingly:
 
 - Do not treat either type as the settled extension contract, and do not build the future
   booking extension by piling fields or callbacks onto them.
-- Add a contribution point or a `CommerceRuntime` member only when a concrete consumer
+- Add a contribution point or a `CommerceRuntimeContext` member only when a concrete consumer
   needs it. Say in the change which consumer, and why the existing seam is insufficient.
-- Prefer exposing application operations and repositories that stay stable over exposing
+- Prefer exposing operations and repositories that stay stable over exposing
   more infrastructure.
 
-**Infrastructure types in the public API.** The service's public API currently exposes
+**Infrastructure types in the public API.** The runtime's public API currently exposes
 JDBI and HikariCP types: `Transaction.handle` (`org.jdbi.v3.core.Handle`), so that
 application repositories can join a commerce transaction, and `createDataSource`
 (`com.zaxxer.hikari.HikariDataSource`). That is why `jdbi3-core` and `HikariCP` are `api`
@@ -104,7 +159,7 @@ infrastructure.
 - Do not casually expand it. Do not add public members that expose `Jdbi`, `Handle`,
   `HikariDataSource`, Flyway, Jetty, or Hoplite types, and do not promote an
   `implementation` dependency to `api`, without stating why in the change and updating
-  this section and `service/README.md`.
+  this section and `runtime/README.md`.
 - Keep new infrastructure types internal or private by default.
 - A future iteration may narrow this surface, for example by wrapping the handle in a
   commerce-owned repository-facing type. Do not make changes that would make such a
@@ -113,7 +168,7 @@ infrastructure.
 ## Known-use-case generalization
 
 Generalize from the known consumers: catering, mobile detailing, computer repair,
-pet/service appointments, and point of sale. Code belongs in generic `commerce-service`
+pet/service appointments, and point of sale. Code belongs in generic `commerce-runtime`
 only if it makes sense for more than one of them. Issuing invoices, recording, allocating,
 and refunding payments, associating financial documents with bookings, lifecycle
 transitions, HTTP error representation, and PostgreSQL transactions qualify. Guest counts,
@@ -137,21 +192,21 @@ It must not spread into customer, financial, or payment APIs.
 Do not make booking mandatory for financial or payment functionality. Booking is one
 commerce capability, not the root of commerce. A point-of-sale application uses
 customers, invoices, payments, allocations, refunds, and reconciliation without a
-booking. Every service operation, table, and endpoint outside booking must work with no
+booking. Every runtime operation, table, and endpoint outside booking must work with no
 booking at all.
 
 ## Provider neutrality
 
-Do not leak Stripe or another payment provider into generic commerce models or service
+Do not leak Stripe or another payment provider into generic commerce models or runtime
 APIs: no `StripePayment`, `StripeRefund`, `PaymentIntent`, `Charge`, or provider SDK
 dependency in either module. Providers sit behind the provider-neutral contract in
 `io.github.castab.commerce.payment.adapter`. A provider adapter depends on
 `commerce-domain` only.
 
-## Authorization in the service
+## Authorization in the runtime
 
 The staff principals, roles, and permissions remain domain concepts in `:domain`. Do not
-remove or redesign them. `:service` does not yet authenticate HTTP requests or check
+remove or redesign them. `:runtime` does not yet authenticate HTTP requests or check
 permissions. Add that in a dedicated iteration, not incidentally. Keep operations
 explicit about their inputs so a principal can be added without restructuring.
 
@@ -216,7 +271,7 @@ booking lifecycle itself, it probably does not belong in the booking lifecycle A
 
 | Path | Contents |
 |---|---|
-| `settings.gradle.kts` | Root project `commerce`; `include("domain")`, `include("service")`. |
+| `settings.gradle.kts` | Root project `commerce`; `include("domain")`, `include("runtime")`. |
 | `build.gradle.kts` | Shared conventions only: group and version, the Java 25 toolchain, Kotlin JVM target, test setup, ktlint, and common POM and repository metadata. No sources. |
 | `gradle.properties`, `gradle/libs.versions.toml` | Build properties and the version catalog for both modules. |
 | `domain/build.gradle.kts` | The `commerce-domain` publication and the `verifyRuntimeDependencies` boundary check. |
@@ -235,20 +290,21 @@ booking lifecycle itself, it probably does not belong in the booking lifecycle A
 | `domain/src/test/kotlin/io/github/castab/commerce/payment/fixtures/TestPaymentModels.kt` | Test-only payment, document, and numeric-comparison helpers. |
 | `domain/src/test/kotlin/io/github/castab/commerce/payment/adapter/PaymentAdapterContractSpec.kt` | Kotest coverage for the provider-neutral adapter contract and processing decisions. |
 | `domain/src/test/kotlin/io/github/castab/commerce/staff/AuthorizationSpec.kt` | Kotest coverage for staff values, resolver behavior, and fail-closed authorization. |
-| `service/build.gradle.kts` | The `commerce-service` publication, its runtime stack, and the Docker-CLI PostgreSQL build service for tests. |
-| `service/src/main/kotlin/io/github/castab/commerce/service/config/` | `CommerceServiceConfiguration`: Hoplite/HOCON loading, environment overrides, validation. |
-| `service/src/main/kotlin/io/github/castab/commerce/service/persistence/` | HikariCP data source, `DatabaseMigrations` (Flyway), `Transactor`/`Transaction`, PostgreSQL error helpers. |
-| `service/src/main/kotlin/io/github/castab/commerce/service/application/` | `CommerceFailure` and `validating`. |
-| `service/src/main/kotlin/io/github/castab/commerce/service/http/` | `CommerceJson`, the error contract and filter, health routes. |
-| `service/src/main/kotlin/io/github/castab/commerce/service/customer/` | The representative capability: repository, operations, routes, DTOs. |
-| `service/src/main/kotlin/io/github/castab/commerce/service/runtime/` | The composition root `commerceService(...)`, `ApplicationContributions`, `CommerceRuntime`, and the development `main`. |
-| `service/src/main/resources/` | `application.conf`, `logback.xml`, and commerce migrations in `db/commerce/`. |
-| `service/src/test/kotlin/io/github/castab/commerce/service/` | Kotest specs for configuration, errors, health, serialization, persistence and transactions, the customer repository, and the composed service; `testing/TestDatabase.kt`. |
-| `.github/workflows/ci.yml` | CI: lint, domain tests, service tests, and the full build on Java 25 for pull requests and pushes to `main`. |
+| `runtime/build.gradle.kts` | The `commerce-runtime` publication (a `java-library`; no `application` plugin), its runtime stack, and the Docker-CLI PostgreSQL build service for tests. |
+| `runtime/src/main/kotlin/io/github/castab/commerce/runtime/` | `CommerceRuntime.kt`: the composition root `commerceRuntime(...)`, `CommerceRuntime` (lifecycle of the runtime's resources), `ApplicationContributions`, and `CommerceRuntimeContext`. No `main()`. |
+| `runtime/src/main/kotlin/io/github/castab/commerce/runtime/config/` | `CommerceRuntimeConfiguration`: Hoplite/HOCON loading, environment overrides, validation. |
+| `runtime/src/main/kotlin/io/github/castab/commerce/runtime/persistence/` | HikariCP data source, `DatabaseMigrations` (Flyway), `Transactor`/`Transaction`, PostgreSQL error helpers. |
+| `runtime/src/main/kotlin/io/github/castab/commerce/runtime/operation/` | Operation support: `CommerceFailure` and `validating`. |
+| `runtime/src/main/kotlin/io/github/castab/commerce/runtime/http/` | `CommerceJson`, the error contract and filter, health routes. |
+| `runtime/src/main/kotlin/io/github/castab/commerce/runtime/customer/` | The representative capability: repository, operations, routes, DTOs. |
+| `runtime/src/main/resources/` | Only the runtime's own Flyway migrations in `db/commerce/`. No `application.conf` and no logging configuration. |
+| `runtime/src/test/kotlin/io/github/castab/commerce/runtime/` | Kotest specs for configuration, errors, health, serialization, persistence and transactions, the customer repository, and `CommerceRuntimeSpec` (the runtime composed with explicit contributions, over real HTTP); `testing/TestDatabase.kt`. |
+| `runtime/src/test/resources/` | Test-only resources: a stand-in application `application.conf` (and a variant without the database block), `logback-test.xml`, and the test application migration in `db/testapp/`. |
+| `.github/workflows/ci.yml` | CI: lint, domain tests, runtime tests, and the full build on Java 25 for pull requests and pushes to `main`. |
 | `.github/workflows/publish.yml` | Publish both artifacts to GitHub Packages when a GitHub Release is published. |
-| `README.md`, `domain/README.md`, `service/README.md`, `AGENTS.md` | Documentation. Keep all of them in sync with the code. |
+| `README.md`, `domain/README.md`, `runtime/README.md`, `AGENTS.md` | Documentation. Keep all of them in sync with the code. |
 
-Maven coordinates: `io.github.castab:commerce-domain` and `io.github.castab:commerce-service`,
+Maven coordinates: `io.github.castab:commerce-domain` and `io.github.castab:commerce-runtime`,
 set by each module's publication `artifactId` (not by the Gradle project names), published
 at one shared version to the GitHub Packages registry of the repository that runs the
 Publish workflow. The repository is being renamed from `commerce-domain` to `commerce`, so
@@ -548,8 +604,8 @@ Entry points: Estimate.create, Quote.create, Invoice.create
 ## Persistence and concurrency boundary
 
 - `FinancialDocumentHistory` is the only history access point. It is an SPI implemented by
-  applications (or by `:service`). `commerce-domain` must never ship an implementation
-  tied to a database; a PostgreSQL implementation belongs in `:service`. No
+  applications (or by `:runtime`). `commerce-domain` must never ship an implementation
+  tied to a database; a PostgreSQL implementation belongs in `:runtime`. No
   implementation may load previous versions implicitly or recursively.
 - `retrievePreviousVersion` performs zero lookups for version 1 and exactly one lookup
   otherwise. `retrieveVersion` performs exactly one lookup. `retrieveLatestVersion`
@@ -761,11 +817,11 @@ These sections apply to every domain and to the build.
 
 ## Persistence boundary
 
-Persistence exists only in `:service`. `:domain` has none: `FinancialDocumentHistory` is
-an SPI that applications (or `:service`) implement, not a persistence layer. Do not add
+Persistence exists only in `:runtime`. `:domain` has none: `FinancialDocumentHistory` is
+an SPI that applications (or `:runtime`) implement, not a persistence layer. Do not add
 persistence to `:domain` for any reason.
 
-In `:service`:
+In `:runtime`:
 
 - PostgreSQL through HikariCP and JDBI, with Flyway migrations. No ORM.
 - Commerce-owned tables live in the `commerce` schema, migrated from
@@ -783,7 +839,7 @@ In `:service`:
   constructors and `restore` factories.
 - Do not force adopter business models into library-owned persistence models.
 - Repositories take the caller's `Transaction` and never begin, commit, or roll back.
-  Transaction boundaries belong to application operations, through `Transactor`. Do
+  Transaction boundaries belong to operations, through `Transactor`. Do
   not add repositories whose every call is an unrelated transaction.
 - Do not introduce a generic `Repository<T, ID>` or repository framework. Use
   intention-revealing repositories, and implement a domain SPI (such as
@@ -802,9 +858,9 @@ Spring  Ktor  Hibernate  JPA  JDBI  HikariCP  PostgreSQL  Flyway  Hoplite  http4
 MongoDB drivers  Jackson  kotlinx.serialization  Logback  kotlin-logging  NATS  Kafka
 ```
 
-**`:service`.** The runtime stack is fixed: http4k (core, Jetty server, kotlinx-serialization
+**`:runtime`.** The runtime stack is fixed: http4k (core, Jetty server, kotlinx-serialization
 format), kotlinx.serialization, HikariCP, JDBI, the PostgreSQL driver, Flyway, Hoplite
-(HOCON), Kotlin Logging, and Logback. A library whose types appear in the service's public
+(HOCON), Kotlin Logging, and Logback. A library whose types appear in the runtime's public
 API is an `api` dependency; everything else is `implementation` or `runtimeOnly`. The
 current `api` set (http4k core and its kotlinx-serialization format, kotlinx.serialization,
 JDBI, HikariCP) is deliberate but revisitable. Do not grow it casually; see
@@ -812,7 +868,7 @@ JDBI, HikariCP) is deliberate but revisitable. Do not grow it casually; see
 add Spring, Spring Boot, Hibernate, JPA, Micronaut, Quarkus, Ktor, a dependency-injection
 framework, or a payment-provider SDK (Stripe or any other).
 
-Versions for both modules live in `gradle/libs.versions.toml`. Service versions follow the
+Versions for both modules live in `gradle/libs.versions.toml`. Runtime versions follow the
 reference backend (`castab/fionas-ui` `apps/backend`); check its current `main` before
 upgrading them.
 
@@ -821,7 +877,7 @@ into the runtime or API dependencies. Check with:
 
 ```bash
 ./gradlew :domain:dependencies --configuration runtimeClasspath
-./gradlew :service:dependencies --configuration runtimeClasspath
+./gradlew :runtime:dependencies --configuration runtimeClasspath
 ```
 
 No preview, EAP, milestone, RC, snapshot, or nightly dependencies. Never add a runtime
@@ -852,13 +908,13 @@ dependency just to support CI or publishing.
   `gradle/actions/setup-gradle` provides caching and wrapper validation. Do not install
   another Gradle, and do not add competing cache steps.
 - **CI must pass before publication.** `ci.yml` runs, with `contents: read` only,
-  `ktlintCheck`, `:domain:test`, `:service:test`, and `build` (each with
+  `ktlintCheck`, `:domain:test`, `:runtime:test`, and `build` (each with
   `--no-build-cache`). It can never publish. `publish.yml` runs `./gradlew clean build
   --no-build-cache` and publishes only if it succeeds. Never add `continue-on-error`,
   skip tests, or reorder these steps. One workflow verifies both modules; do not split it
   into per-module workflows.
-- **Service tests need Docker.** `:service:test` starts PostgreSQL through the runner's
-  Docker CLI (a Gradle build service in `service/build.gradle.kts`). Do not replace it
+- **Runtime tests need Docker.** `:runtime:test` starts PostgreSQL through the runner's
+  Docker CLI (a Gradle build service in `runtime/build.gradle.kts`). Do not replace it
   with Testcontainers, H2, or an embedded database, and do not skip database specs to get
   CI green.
 - **Releases go to GitHub Packages, triggered only by a published GitHub Release.** Do not
@@ -868,7 +924,7 @@ dependency just to support CI or publishing.
 - **Maven versions derive from release tags.** A tag `vX.Y.Z[-prerelease]` becomes Maven
   version `X.Y.Z[-prerelease]` for **both** artifacts, passed to Gradle as the `version`
   project property (`ORG_GRADLE_PROJECT_version`). The modules always share one version,
-  and `commerce-service`'s POM depends on `commerce-domain` at that version. The build script's default, `0.0.0-SNAPSHOT`, is for
+  and `commerce-runtime`'s POM depends on `commerce-domain` at that version. The build script's default, `0.0.0-SNAPSHOT`, is for
   local builds. Never write release versions into `build.gradle.kts`,
   `gradle.properties`, or the workflow files.
 - **Published versions are immutable.** Never design for overwriting a released version.
@@ -879,13 +935,15 @@ dependency just to support CI or publishing.
   `publishToMavenLocal` must keep working without any GitHub credentials. Never put
   tokens in repository files. Consumers keep theirs in `~/.gradle/gradle.properties`.
 - **Artifact identity is not project identity.** The Gradle projects are `:domain` and
-  `:service`; their publications set `artifactId` to `commerce-domain` and
-  `commerce-service` (and `archivesName` to match). Never publish an artifact named
-  `domain` or `service`, and never change `io.github.castab:commerce-domain`.
+  `:runtime`; their publications set `artifactId` to `commerce-domain` and
+  `commerce-runtime` (and `archivesName` to match). Never publish an artifact named
+  `domain` or `runtime`, and never change `io.github.castab:commerce-domain`. The
+  pre-release `commerce-service` artifact name was replaced by `commerce-runtime`; do not
+  reintroduce it or publish a compatibility artifact under it.
 - **Published artifacts, per module:** the main jar, a sources jar, a javadoc jar (empty
   for now, because the sources are Kotlin-only and Dokka is not used), the POM, and
   Gradle module metadata. The POMs declare the repository's license (Apache-2.0, see
-  `LICENSE`). Keep the two in sync. `commerce-service` publishes a plain library jar;
+  `LICENSE`). Keep the two in sync. `commerce-runtime` publishes a plain library jar;
   deployable fat jars and images belong to consuming applications.
 - **Test-only dependencies must not leak into the published library.** Check the
   generated POM or `runtimeClasspath` after dependency changes.
@@ -917,8 +975,8 @@ dependency just to support CI or publishing.
 - Keep the public API small. Each domain should be readable in minutes. Don't add
   abstraction layers, reflection, classpath scanning, service locators, dependency
   injection, or coroutines to the `:domain` main source set.
-- In `:service`, composition is explicit: dependencies are constructed in order in
-  `commerceService(...)` with ordinary Kotlin. No DI container, annotation scanning, or
+- In `:runtime`, composition is explicit: dependencies are constructed in order in
+  `commerceRuntime(...)` with ordinary Kotlin. No DI container, annotation scanning, or
   reflection-based wiring (Hoplite's reflective configuration decoding is the one
   accepted use of reflection).
 - Keep Java callers in mind: `@JvmStatic` on companion factories, `@JvmField` on
@@ -983,14 +1041,19 @@ dependency just to support CI or publishing.
   document or record, and that the financial types never mention the payment package.
   Update these deliberately. Never loosen them to make a change pass.
 - Tests must run on Java 25. Never lower the test runtime to get tests passing.
-- Service tests use Kotest `FunSpec` as well. Database specs run against a real
+- Runtime tests use Kotest `FunSpec` as well. Database specs run against a real
   PostgreSQL provided by the build (the Docker CLI build service, or
   `TEST_DATABASE_JDBC_URL`), create their own database through
   `testing/TestDatabase.kt`, and apply the real migrations through `DatabaseMigrations`.
   Never maintain a separate test schema, never use H2, and never use Testcontainers.
-- Service tests should prove behavior that matters: configuration loading, the error
+- Runtime tests should prove behavior that matters: configuration loading, the error
   contract, serialization of DTOs, transaction commit and rollback, repository behavior,
-  and the composed service over real HTTP. Don't write tests only to inflate coverage.
+  and the composed runtime over real HTTP.
+- The tests are the runtime's only executable consumer in this repository.
+  `CommerceRuntimeSpec` composes the runtime the way a concrete application does: explicit
+  `ApplicationContributions`, `commerceRuntime(...)`, `start()`, real HTTP and
+  PostgreSQL, then `close()`. Keep the application-contribution transaction coverage: an
+  application-owned table and a commerce repository commit and roll back together. Don't write tests only to inflate coverage.
 
 Run:
 
@@ -1002,7 +1065,7 @@ Run:
 .\gradlew.bat clean test
 ```
 
-`:domain:test` needs no Docker; `:service:test` does.
+`:domain:test` needs no Docker; `:runtime:test` does.
 
 The build cache is on. Add `--no-build-cache` to force the tests to actually run.
 
@@ -1016,9 +1079,9 @@ Any change to lifecycle topology or semantics must update, in the same change:
 - this file: the topology blocks, invariants, and rules;
 - the tests.
 
-Changes to module boundaries, artifact coordinates, the service's HTTP or error
+Changes to module boundaries, artifact coordinates, the runtime's HTTP or error
 contract, configuration, or migrations must update the root `README.md` and
-`service/README.md` in the same change.
+`runtime/README.md` in the same change.
 
 Code and documentation must never disagree about legal lifecycle edges or Maven
 coordinates. In the booking lifecycle, use the term **phase**. In the financial domain,
@@ -1038,13 +1101,14 @@ unless the requested work requires them. Do not couple the booking lifecycle to 
 domains, and do not make the financial documents depend on payments. Prefer narrow
 architectural evolution.
 
-The project has exactly two modules, `:domain` and `:service`. Do not create speculative
-modules (`service-core`, `service-http4k`, `service-postgres`, `service-jdbi`,
-`service-runtime`, `service-testing`, `commerce-domain-persistence`, ...). Split
-`:service` only when a concrete consumer demonstrates the need, for example orchestration
+The project has exactly two modules, `:domain` and `:runtime`. Do not create speculative
+modules (`runtime-core`, `runtime-http4k`, `runtime-postgres`, `runtime-jdbi`,
+`runtime-testing`, `commerce-domain-persistence`, an executable `app`/`server`/`runner`
+module, ...). Split
+`:runtime` only when a concrete consumer demonstrates the need, for example orchestration
 without http4k or PostgreSQL.
 
-In `:service`, do not create empty packages or placeholder layers for capabilities that
+In `:runtime`, do not create empty packages or placeholder layers for capabilities that
 have no code yet, and do not implement speculative endpoints or operations to fill out a
 list.
 
@@ -1060,7 +1124,7 @@ Before changing the core, ask:
 - Can the type system express this naturally without introducing a runtime framework?
 
 If the answers point away from the lifecycle itself, the change belongs in adopter code
-or in `:service`, and only if it is generic across the known consumers.
+or in `:runtime`, and only if it is generic across the known consumers.
 
 ## Open questions
 
@@ -1088,11 +1152,17 @@ These are intentionally unresolved. Do not settle them incidentally.
   `Customer.Id` reference is now part of each financial document snapshot.
 - **The booking extension seam.** How an application supplies strongly typed booking
   details (and phase rehydration, transition policy, serializers, and persistence) to
-  `:service` is undecided. `service/README.md` lists the responsibilities identified so
+  `:runtime` is undecided. `runtime/README.md` lists the responsibilities identified so
   far. Do not invent the API incidentally, and never substitute opaque JSON.
 - **HTTP authentication and authorization.** The staff principals and permissions exist
-  in `:domain`, but `:service` does not yet authenticate requests or check permissions.
+  in `:domain`, but `:runtime` does not yet authenticate requests or check permissions.
   That is a dedicated future iteration.
+- **Capability selection (intentionally deferred).** Every runtime serves the commerce
+  routes (currently the customer endpoints), and `/health` and `/ready` are runtime
+  infrastructure that stays enabled. Whether and how an application selects commerce
+  capabilities will be designed only after concrete consumers show the composition they
+  need. Until then, do not add capability flags, per-route toggles, or a capability
+  framework.
 - **A shared `Active.cancel()`.** All active phases can be cancelled, but `cancel()` is
   declared per phase. Code holding only an `Active` must use `when` to cancel. Hoisting
   `cancel()` to `Active` would change the public API shape, so leave that for a deliberate

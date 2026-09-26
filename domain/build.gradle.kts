@@ -1,7 +1,7 @@
 // commerce-domain: pure commerce vocabulary and invariants.
 //
 // The published runtime dependency surface of this module is kotlin-stdlib only.
-// It must never depend on :service or on any HTTP, persistence, serialization,
+// It must never depend on :runtime or on any HTTP, persistence, serialization,
 // configuration, or logging library. Shared toolchain, test, lint, and publishing
 // conventions come from the root build.gradle.kts.
 plugins {
@@ -22,8 +22,8 @@ dependencies {
 }
 
 // Protects the module boundary: an adapter that depends only on commerce-domain must
-// never acquire service infrastructure (http4k, Jetty, JDBI, HikariCP, PostgreSQL,
-// Flyway, Hoplite, logging, serialization) or :service transitively. `check` fails if
+// never acquire runtime infrastructure (http4k, Jetty, JDBI, HikariCP, PostgreSQL,
+// Flyway, Hoplite, logging, serialization) or :runtime transitively. `check` fails if
 // the resolved runtime classpath contains anything beyond kotlin-stdlib and its own
 // annotations dependency.
 val verifyRuntimeDependencies =

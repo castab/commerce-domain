@@ -21,6 +21,6 @@ rootProject.name = "commerce"
 
 // Gradle project names are not artifact identities. Each module sets its published
 // artifactId explicitly: :domain -> io.github.castab:commerce-domain and
-// :service -> io.github.castab:commerce-service.
+// :runtime -> io.github.castab:commerce-runtime.
 include("domain")
-include("service")
+include("runtime")

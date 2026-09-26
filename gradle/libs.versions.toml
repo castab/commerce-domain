@@ -4,7 +4,7 @@ kotest = "6.2.5"
 mockk = "1.14.11"
 ktlint-gradle = "14.2.0"
 
-# commerce-service runtime stack. Versions follow castab/fionas-ui apps/backend (main).
+# commerce-runtime stack. Versions follow castab/fionas-ui apps/backend (main).
 http4k = "6.58.0.0"
 kotlinx-serialization = "1.11.0"
 hikaricp = "7.1.0"
