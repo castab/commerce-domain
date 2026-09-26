@@ -50,9 +50,11 @@ It is also not a specific business's backend. Catering, mobile detailing, comput
 repair, pet and service appointments, and point of sale should all be able to use it.
 Anything that makes sense for only one of them belongs to that application.
 
-> **Status: foundation.** This first iteration establishes the architecture and the
-> infrastructure, and shows the full request path with one capability (customers). It
-> does not yet orchestrate bookings, financial documents, or payments. See
+> **Status: foundation.** This iteration establishes the architecture and the
+> infrastructure: configuration, persistence and transactions, migrations, HTTP, error
+> handling, health, and the application-contribution seam. It does not yet persist or
+> orchestrate commerce facts (financial documents, payments), and it never owns
+> application entities such as customers or bookings. See
 > [Current limitations](#current-limitations).
 
 ## Composing an application
@@ -66,7 +68,7 @@ fun main() {
     val application =
         ApplicationContributions(
             migrationLocations = listOf("classpath:db/migration"),
-            routes = { context -> listOf(myApplicationRoutes(context.transactor, context.customers)) },
+            routes = { context -> listOf(myApplicationRoutes(context.transactor)) },
         )
 
     val runtime =
@@ -119,9 +121,31 @@ commerce-runtime
 
 `ApplicationContributions` is intentionally small and not booking-specific. An
 application contributes its own Flyway locations and its own routes. The routes are built
-from the shared `CommerceRuntimeContext` (the configuration, the `Transactor`, and the
-commerce repositories), so an application's writes and commerce writes can share one
-transaction. The runtime owns the error handling around every route.
+from the shared `CommerceRuntimeContext`, which currently holds the configuration and the
+`Transactor`. The runtime owns the error handling around every route.
+
+### Application entities and the shared transaction
+
+The runtime owns no customer, booking record, inquiry, or other application data model,
+and no customer persistence, customer CRUD, or customer endpoints. Those entities, and
+their relationships to commerce facts, belong to the concrete application. What the
+runtime provides is the transaction those relationships are written in:
+
+```text
+Application operation
+        │
+        ▼
+runtime Transactor
+        │
+        ├──────────────► application repositories
+        │
+        └──────────────► commerce repositories   (as the runtime gains commerce persistence)
+```
+
+Both kinds of repository receive the same `Transaction`, so an application can, for
+example, insert its inquiry, the commerce estimate, and its own inquiry-to-estimate
+relationship, and commit all three together. Neither generic module knows about the
+relationship. Repositories never open their own transactions.
 
 ### Provisional extension seam
 
@@ -157,9 +181,10 @@ decision (see [`AGENTS.md`](../AGENTS.md#provisional-application-extension-seam)
   version); `commerce-domain` never depends on `commerce-runtime`.
 - The runtime reuses domain types directly. It never duplicates them, and it never
   annotates them for serialization or persistence.
-- The runtime (or the concrete application) owns relationships that only coordinate
-  independently meaningful domain concepts, for example which financial documents belong
-  to a booking. The domain stays free of them:
+- Relationships that only coordinate independently meaningful concepts, for example which
+  financial documents belong to a booking or a customer, are owned by the concrete
+  application, which can persist them in the runtime's shared transaction. Neither the
+  domain nor the runtime holds them:
 
   > A relationship belongs in `commerce-domain` when one domain concept cannot meaningfully
   > express its semantics or invariants without the other concept. Relationships that
@@ -211,12 +236,11 @@ never open their own transactions.
 
 | Package (`io.github.castab.commerce.runtime...`) | Contents |
 |---|---|
-| `runtime` | `commerceRuntime(...)`, `CommerceRuntime`, `ApplicationContributions`, and `CommerceRuntimeContext`. |
+| `runtime` | `commerceRuntime(...)`, `CommerceRuntime`, `ApplicationContributions`, and `CommerceRuntimeContext` (configuration and `Transactor`). |
 | `runtime.config` | `CommerceRuntimeConfiguration`: HOCON loading, environment overrides, and validation. |
 | `runtime.persistence` | `createDataSource` (HikariCP), `DatabaseMigrations` (Flyway), `Transactor` and `Transaction`, and PostgreSQL error helpers. |
-| `runtime.operation` | Support for operations (use cases such as `CreateCustomer`): `CommerceFailure`, the expected failures of operations, and `validating`. |
+| `runtime.operation` | Support for operations (use cases such as issuing an invoice or recording a payment): `CommerceFailure`, the expected failures of operations, and `validating`. |
 | `runtime.http` | `CommerceJson`, `jsonBody`, the error contract and `CommerceErrorHandling` filter, and health routes. |
-| `runtime.customer` | The representative capability: `CustomerRepository`, `CreateCustomer` / `GetCustomer`, and the customer routes and DTOs. |
 
 Packages for booking, financial, and payment orchestration will appear when they contain
 real code, not before.
@@ -280,7 +304,15 @@ environment. The database password is redacted from the configuration's `toStrin
 - With `FLYWAY_ENABLED=true`, `commerceRuntime(...)` migrates before building the
   runtime. Otherwise migrations are run separately.
 
-Current commerce tables: `commerce.customers` (id, name, email).
+Current commerce tables: none. The `commerce` schema and its history table remain, ready
+for runtime persistence of commerce facts. An earlier migration
+(`V20260926120000__commerce_customers.sql`, released in 0.0.4) created
+`commerce.customers`; the forward migration `V20260926180000__drop_commerce_customers.sql`
+removes it, because customers are application-owned. Migration history is never edited, so
+a fresh installation creates and then drops that table. On an existing installation the
+forward migration fails, instead of losing data, while `commerce.customers` still holds
+rows or while an application object such as a foreign key still depends on it: move the
+data into application tables, remove the dependency, and migrate again.
 
 ### Transactions
 
@@ -301,7 +333,7 @@ the runtime. Routes translate between DTOs and domain values explicitly.
 Every error has one shape:
 
 ```json
-{"code": "validation_failed", "message": "Customer name must not be blank"}
+{"code": "validation_failed", "message": "Financial document 5f0c6a7e-... must contain at least one line item"}
 ```
 
 | Category | Status | `code` | Raised by |
@@ -355,18 +387,16 @@ published.
 
 ## Current capabilities
 
-These routes are served by every application built on the runtime. There is currently no
-way to disable them; see [Current limitations](#current-limitations).
+The runtime's built-in routes are infrastructure only, served by every application built
+on it:
 
 | Endpoint | Behavior |
 |---|---|
-| `POST /customers` `{"name", "email"}` | Creates a customer. `201` with the customer and `Location`. Invalid values are `422`. |
-| `GET /customers/{customerId}` | `200` with the customer, or `404`. |
 | `GET /health`, `GET /ready` | See [Health](#health). |
 
-Customers are the representative capability because every known consumer, with or
-without bookings, has them. They exercise every layer: route, DTO, domain translation,
-operation, transaction, repository, migration, and error mapping.
+Every other route comes from the application through `ApplicationContributions`, served
+behind the runtime's error handling and able to use its shared `Transactor`. The runtime
+exposes no generic CRUD endpoints.
 
 ## Booking extension direction
 
@@ -383,15 +413,16 @@ the known consumers. What this module already guarantees:
   JSONB may later be a *persistence representation* of a strongly typed application
   model. That is a separate decision.
 - Booking stays optional. `ApplicationContributions` is broader than booking. Nothing
-  about customers, financial documents, payments, or their HTTP and persistence requires a
-  booking, and a point-of-sale application contributes no booking functionality at all.
+  about financial documents, payments, or their HTTP and persistence requires a booking,
+  and a point-of-sale application contributes no booking functionality at all.
 - A booking type parameter, if one is introduced, stays confined to booking APIs. It must
-  not spread into customer, financial, or payment APIs.
+  not spread into financial or payment APIs.
 
 Responsibilities this foundation has identified for the future extension:
 
 1. **Detail schema.** Its own tables, contributed through the existing
-   `ApplicationContributions.migrationLocations`, keyed by the domain's `Booking.Id`.
+   `ApplicationContributions.migrationLocations`, keyed by the application's own booking
+   identity (commerce-domain defines no booking record or booking ID).
 2. **Transactional persistence.** A repository for its details that takes the runtime's
    `Transaction`, so detail writes commit atomically with the booking identity and
    lifecycle writes. `Transaction` already allows this.
@@ -407,8 +438,9 @@ Responsibilities this foundation has identified for the future extension:
    a quote may become booked once a deposit is reconciled). It is evaluated inside the
    same transaction as the facts it depends on.
 
-The booking-to-financial-document association is not an extension concern. The runtime
-will own it as an application-level relationship.
+The booking-to-financial-document association is application-owned, like every relationship
+between application entities and commerce facts. The runtime's part is the shared
+transaction in which the application writes it.
 
 ## Current limitations
 
@@ -434,9 +466,9 @@ will own it as an application-level relationship.
 - JDBI (`Handle`) and HikariCP (`HikariDataSource`) types are exposed in the public API.
   This is intentional but may be narrowed later; see
   [Infrastructure types in the public API](#infrastructure-types-in-the-public-api).
-- **Capability selection is intentionally deferred.** The commerce routes (currently the
-  customer endpoints) are always enabled, and `/health` and `/ready` are runtime
-  infrastructure. Applications cannot yet choose which commerce capabilities they serve.
+- **Capability selection is intentionally deferred.** The runtime currently serves only
+  its infrastructure routes, `/health` and `/ready`. When it gains commerce routes,
+  applications will not yet be able to choose which commerce capabilities they serve.
   That will be designed only after concrete consumers show which compositions they need.
   There are no capability flags or capability framework until then.
 
@@ -448,11 +480,13 @@ will own it as an application-level relationship.
 
 The tests are this repository's only executable consumer of the runtime. The specs cover
 configuration loading and validation, the error contract, health and readiness, DTO
-serialization, Flyway discovery for commerce and application migrations, transaction
-commit and rollback across commerce and application tables, and the customer repository.
-`CommerceRuntimeSpec` composes the runtime the way a concrete application does: it
-supplies explicit `ApplicationContributions` (an application migration and a route that
-shares a transaction with a commerce repository), starts Jetty, exercises it over real
-HTTP and PostgreSQL, and closes it. Database specs run against a real PostgreSQL 18 that
+serialization, Flyway discovery for commerce and application migrations, the upgrade path
+that drops `commerce.customers` (including its refusal to discard rows or dependent
+objects), and transaction commit and rollback across several writes sharing one
+`Transaction`. `CommerceRuntimeSpec` composes the runtime the way a concrete application
+does: it supplies explicit `ApplicationContributions` (an application migration and routes
+that persist an application-owned table through the shared `Transactor`), starts Jetty,
+exercises it over real HTTP and PostgreSQL, including error handling and rollback, and
+closes it. Database specs run against a real PostgreSQL 18 that
 the build starts through the Docker CLI. See
 [Building and testing](../README.md#building-and-testing).
