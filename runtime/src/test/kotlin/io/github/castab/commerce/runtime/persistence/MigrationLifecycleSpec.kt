@@ -85,12 +85,12 @@ class MigrationLifecycleSpec :
 
                 // Runtime V1 coexists with application V1 in separate version spaces.
                 dataSource.appliedVersions(RuntimeMigrations.SCHEMA) shouldContainExactly
-                    listOf("1")
+                    listOf("1", "2")
                 dataSource.appliedVersions(TEST_APPLICATION_SCHEMA) shouldContainExactly listOf("1")
             }
         }
 
-        test("fresh baseline contains only financial and authorization tables and validates unchanged") {
+        test("runtime migrations contain financial, authorization, and outbox tables and validate unchanged") {
             withTestDatabase { _, dataSource ->
                 val lifecycle = MigrationLifecycle(dataSource, testApplication)
                 lifecycle.migrate()
@@ -101,6 +101,8 @@ class MigrationLifecycleSpec :
                         "financial_document_lineages",
                         "financial_document_snapshots",
                         "flyway_schema_history",
+                        "outbox_aggregates",
+                        "outbox_events",
                         "payment_allocations",
                         "payment_records",
                         "principal_roles",
@@ -329,7 +331,7 @@ class MigrationLifecycleSpec :
                     dataSource.relationExists("public.test_application_records") shouldBe false
                     // Independent histories and version spaces.
                     dataSource.appliedVersions(RuntimeMigrations.SCHEMA) shouldContainExactly
-                        listOf("1")
+                        listOf("1", "2")
                     dataSource.appliedVersions(TEST_APPLICATION_SCHEMA) shouldContainExactly listOf("1")
                 }
             }

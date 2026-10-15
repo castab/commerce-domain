@@ -35,7 +35,8 @@ concrete commerce application   (owns main() and the process)
 - **provides opinionated HTTP and persistence infrastructure:** http4k on Jetty,
   kotlinx.serialization, HikariCP, JDBI, PostgreSQL, and Flyway.
 - **starts and manages runtime resources when a concrete application invokes it.**
-  `start()` starts Jetty, and `close()` stops it and closes the connection pool.
+  `start()` starts Jetty and opt-in background services; `close()` stops HTTP, closes
+  those services in reverse order, and closes the connection pool.
 - **does not own the surrounding process or application lifecycle.** It installs no
   shutdown hook, never blocks the calling thread, and parses no command line. Those
   belong to the application's `main`.
@@ -104,8 +105,9 @@ configuration → DataSource (HikariCP) → migration phase (runtime, then appli
 Nothing after the migration phase is built until it succeeds. See
 [Database and migrations](#database-and-migrations).
 
-The server is created but not started. `CommerceRuntime.start()` starts Jetty and returns
-immediately. `CommerceRuntime.close()` stops Jetty and closes the pool.
+The server and contributed background services are created without starting work.
+`CommerceRuntime.start()` starts them and returns immediately. `CommerceRuntime.close()`
+stops HTTP, closes services in reverse order, and closes the pool.
 `CommerceRuntime.http` is the complete HTTP handler, usable without a server.
 
 ### Application contributions
@@ -127,7 +129,8 @@ commerce-runtime
 
 `ApplicationContributions` is intentionally small and not booking-specific. An
 application contributes its own migrations (the PostgreSQL schema it owns and the Flyway
-locations of its scripts, never the runtime's), its own routes, and software-defined `permissionDefinitions`. The routes are built from
+locations of its scripts, never the runtime's), its own routes, software-defined
+`permissionDefinitions`, and optional `backgroundServices`. Routes and service factories are built from
 the shared `CommerceRuntimeContext`, which holds configuration, the `Transactor`, the
 `financialLedger`, `context.sessions`, and `context.authorization`. The
 runtime owns the error handling around every route.
@@ -427,12 +430,16 @@ runtime version and the database shape it requires are one compatibility unit.
   unqualified names into the commerce schema. Application migrations run with the
   application's declared schema as their default schema.
 
-The runtime stream is one fresh `V1__commerce_baseline.sql`, a deliberate pre-production
+The runtime stream starts with `V1__commerce_baseline.sql`, a deliberate pre-production
 rebaseline of the former V1-V13 stream. It creates financial snapshots and lineage references,
 payments, allocations, refunds, deposit requirements, sessions, principals, users, services,
 roles, grants, assignments, and service credentials. Foreign keys, exact-snapshot references,
 predecessor constraints, mutation locking triggers, and immutable deposit revisions remain.
 It creates no product or catalog tables.
+
+`V2__transactional_outbox.sql` additively creates `commerce.outbox_aggregates` and
+`commerce.outbox_events`, their indexes, and an immutable-envelope trigger. It upgrades
+both empty and populated V1 databases; V1 is unchanged. It creates no application tables.
 
 Existing developer databases must be recreated, including application schemas and both
 Flyway histories. This release does not upgrade old databases; do not use repair or
@@ -820,6 +827,161 @@ transaction's, and one that repeats it is accepted. An inner call requesting a d
 isolation fails with JDBI's `TransactionException`, because the level of an open
 transaction cannot change; the outer transaction rolls back if that exception escapes its
 block. Only the outer call chooses the isolation.
+
+### Transactional outbox
+
+`context.outbox` persists application-owned integration events in the same transaction
+as application rows and financial operations. This is runtime persistence/delivery
+coordination, not domain vocabulary: neither domain models nor ledger mutations emit
+events automatically. The first consumer is `fionas-commerce`; event names, business
+schemas, business idempotency, routing, and the actual transport remain its responsibility.
+No broker dependency, external adapter, HTTP administration endpoint, or new executable
+is included.
+
+```kotlin
+// The application establishes this envelope once for the successful business command.
+val event = OutboxEvent(
+    id = eventId,                         // stable globally unique UUID
+    producerId = "myapp",                // stable logical namespace, shared by its instances
+    aggregateType = "order",             // application vocabulary
+    aggregateId = orderId.toString(),
+    eventType = "OrderAccepted",
+    schemaVersion = 1,
+    destination = "myapp.orders",
+    payload = serializedApplicationEvent, // exact text, including whitespace and decimals
+    occurredAt = occurredAt.truncatedTo(ChronoUnit.MICROS),
+)
+context.transactor.inTransaction { transaction ->
+    // Authorize and recognize previously committed commands before making new writes.
+    applicationRepository.save(transaction, order)
+    context.financialLedger.create(transaction, document)
+    val recorded = context.outbox.append(transaction, event)
+    // recorded.aggregateSequence and recorded.recordedAt are durable on commit.
+}
+```
+
+`append` never opens a transaction, commits, or publishes. All writes roll back together.
+An existing event ID always raises `CommerceFailure.Conflict`, even for identical content;
+there is no silent replacement or automatic command deduplication. Retry an aborted
+business transaction as a whole. Recognizing a committed command should return its prior
+result without appending again. Payloads are valid Unicode text without NUL, preserved as
+PostgreSQL `text`, not parsed or converted to JSONB. Timestamps use microsecond precision
+and years 1–9999; identifiers are validated, bounded strings. Event `toString()` excludes
+application content. Immutable columns and confirmed publication are protected by a database
+trigger. There is no mutation or deletion API for event content.
+
+Each `(producerId, aggregateType, aggregateId)` has a durable counter row. Append's upsert
+locks that row until the business transaction ends, allocating sequence numbers in serialized
+transaction order. Multiple appends in one transaction get distinct sequences; rollback
+also rolls back the counter. Unrelated aggregates and producer namespaces have independent
+counters. An append against a stale `REPEATABLE_READ` snapshot fails with `Conflict`;
+retry the entire caller transaction. Applications touching several aggregates in one transaction must acquire them in
+a consistent order to avoid PostgreSQL deadlocks. This is a delivery sequence, not an event
+sourcing aggregate store or a replacement for application concurrency policy.
+
+An application opts into dispatch through `ApplicationContributions.backgroundServices`,
+a list of factories receiving the existing context:
+
+```kotlin
+val application = ApplicationContributions(
+    migrations = applicationMigrations,
+    routes = ::applicationRoutes,
+    backgroundServices = listOf({ context ->
+        OutboxDispatcher(
+            publisher = context.outbox.publisher(
+                producerId = "myapp",       // same stable namespace used at append
+                publisherId = instanceId,   // this process instance, not the producer
+            ),
+            transport = applicationTransport,
+            settings = OutboxDispatchSettings(
+                batchSize = 10,
+                pollInterval = Duration.ofSeconds(1),
+                lease = Duration.ofMinutes(2),
+                publishTimeout = Duration.ofSeconds(5),
+                retryInitial = Duration.ofSeconds(1),
+                retryMaximum = Duration.ofMinutes(5),
+            ),
+        )
+    }),
+)
+val runtime = commerceRuntime(configuration, application)
+runtime.start() // starts HTTP, then services in declaration order; returns promptly
+// The application's process owner eventually calls runtime.close().
+```
+
+Factories must construct without starting work and clean up their own failed construction.
+Runtime composition closes previously constructed services if a later factory fails.
+Failed start closes all constructed services, including the partially started service.
+Close is idempotent, attempts every cleanup despite failures, and preserves suppressed
+cleanup errors. It stops HTTP first, services in reverse order next, and the pool last.
+`ManagedBackgroundService.close()` must be bounded and safe before start or after failed
+start. An application supplying no services retains its HTTP/pool behavior. There is no
+global scheduler, deployment configuration file, process blocking, or shutdown hook.
+
+`OutboxTransport.publish(record)` receives the immutable envelope, aggregate sequence,
+and append timestamp. Return `PublicationResult.CONFIRMED` **only** after verifying positive
+durable transport acceptance. An attempted send, ambiguous response, timeout, or connection
+loss is not confirmation: return `UNCONFIRMED` or throw. A future application NATS adapter
+must validate JetStream's PubAck for the expected stream and use `record.event.id` as
+`Nats-Msg-Id`; neither the runtime nor this PR implements that adapter. Pass destination
+and exact payload unchanged and include the sequence in the application's transport
+envelope/headers. Configure finite adapter I/O timeouts and honor interruption.
+
+The dispatcher claims a bounded batch (1–100) in a short `READ COMMITTED` transaction using
+`FOR UPDATE SKIP LOCKED`. Only the earliest unpublished sequence of each aggregate is
+eligible, even when its predecessor is leased or waiting for retry. Other aggregates
+remain eligible. Claims commit before transport calls; no database lock spans network I/O.
+A fresh UUID token fences each claim. Confirm/fail compare ID, explicit producer namespace,
+token, unpublished state, and a still-live lease in one atomic update. Both return whether
+the update took effect. Delivery APIs reject invocation inside a managed application
+transaction to prevent accidental publication before claim commit.
+
+Lease expiry is judged by PostgreSQL, including equality at expiration. The next claim
+automatically recovers expired leases; no recovery job or manual reset is required. Attempts
+count claims, including process crashes. Failure codes are a closed safe vocabulary
+(`UNCONFIRMED`, `TRANSPORT_EXCEPTION`, `TIMEOUT`), never exception messages. Failure releases
+the live claim and schedules saturating exponential retry, with no exhaustion or deletion
+threshold. Empty polls are quiet. Database outages are logged and retried without coupling
+business HTTP operations to broker availability.
+
+The worker processes a batch sequentially. Settings require
+`lease > batchSize * (publishTimeout + 5 seconds) + 10 seconds`, reserving time for claim,
+publication, and finalization. SQL statements and JDBC network waits in delivery transactions
+are bounded to five seconds; pool acquisition still follows the application's existing pool
+configuration. Size the pool and leave additional lease margin for contention, scheduling
+pauses, and database commit latency. Expired claims fail closed even if the original worker
+eventually returns. Transport calls use a bounded executor with one virtual thread and one
+queued attempt; timeout cancels and removes queued work. A broken adapter ignoring
+interruption can occupy that thread until repaired/restarted, but cannot create unlimited
+threads or keep the JVM alive. Shutdown interrupts polling/publication, waits up to fifteen
+seconds for database work, and reports a cleanup failure if that bound is exceeded; runtime
+still attempts all other resource cleanup. Unfinished leases remain recoverable.
+
+Delivery is **at least once**, not exactly once. A broker may accept an event before the
+process dies or its database confirmation fails; recovery sends the same ID and content
+again. A superseded token can never finalize the newer claim. Aggregate successors cannot
+be attempted before their predecessor is confirmed, but delayed duplicate transport sends
+can still arrive after later sequences. Transport routing must preserve ordering where
+needed, and consumers need durable idempotency and sequence-aware handling. Broker
+deduplication windows alone are insufficient. A permanent failure intentionally blocks its
+aggregate until the application/operator repairs the transport or destination.
+
+Operators can read `context.outbox.backlog("myapp")` or its caller-transaction overload.
+It returns unpublished count, oldest unpublished **recorded** timestamp, live claim count,
+eligible aggregate heads, records waiting for their retry time, and records with a failure
+code. Counts are from one statement; claimed/waiting counts may overlap, and blocked
+successors are not retry-eligible. Alert on increasing backlog, old append timestamps,
+failure counts, or absent `outbox_publication_confirmed` progress. Structured logs include
+claim counts, confirmed/failed event IDs, safe failure codes, and dispatcher lifecycle;
+they omit payloads, exception messages, and transport settings. Applications choose metrics,
+health policies, and authenticated operator interfaces. Producer scoping prevents accidental
+cross-application dispatch; it is not a substitute for database access control.
+
+No automatic purge is installed. A future explicit retention job may delete only confirmed
+rows older than an application-approved retention period; never purge unpublished rows by
+age. Keep aggregate counters to preserve sequence identity. Applications must minimize
+sensitive payload data and choose retention, access, encryption, and downstream handling
+appropriate to their event contracts. Published rows otherwise remain stored indefinitely.
 
 ### HTTP and errors
 
@@ -1315,7 +1477,7 @@ still enforces every protected operation's permission on every request.
 **Session cleanup.** Expired and revoked rows stay in `commerce.principal_sessions`; they
 authenticate nothing. Purging old inactive rows would be a runtime capability (an operation
 over the `expires_at` index); when and how often to run it would be application or
-deployment policy. The runtime provides neither yet, and it will not schedule background
+deployment policy. The runtime provides neither yet, and it will not automatically schedule background
 jobs itself.
 
 Sessions may belong to any `PrincipalId`, human or service, and authorization treats them
@@ -1563,7 +1725,9 @@ transaction in which the application writes it.
   orchestrated by the ledger; payment and financial-document reconciliation are derived
   from those facts.
 - Payment-allocation-reversal persistence and orchestration are deferred.
-- No idempotency keys, outbox or events, Server-Sent Events, or scheduled jobs yet.
+- No generic command idempotency keys, business event schemas, broker adapters,
+  Server-Sent Events, or general job scheduler. The opt-in transactional outbox coordinates
+  application-defined events and transports.
 - No payment provider integration. Providers (e.g. a future `stripe-adapter`) sit
   behind the provider-neutral contract in `commerce-domain`. This module will never
   depend on a provider SDK.
@@ -1613,6 +1777,15 @@ lineage discovery across versions, fully unwound allocations, split payments ret
 deterministic ordering (including equal receipt times), the immutability and closed
 construction of `PaymentHistory`, reads inside an uncommitted caller transaction, and the
 `REPEATABLE_READ` isolation of the convenience reads. `MigrationLifecycleSpec` also verifies the exact fresh schema and subsequent validation.
+
+`OutboxSpec` verifies cross-schema business/financial/event atomicity, exact text and
+timestamp round trips, immutable content, duplicate conflicts, aggregate serialization
+(observed PostgreSQL lock waits), parallel claims, namespace isolation, expiry, fencing,
+and populated V1 migration. `OutboxDispatcherSpec` verifies confirmed acceptance, exceptions,
+ambiguous acceptance, failed database finalization after external success, stable identity
+on retry, independent aggregate progress, and bounded shutdown with a hung transport.
+`BackgroundServiceSpec` verifies lifecycle ordering, cleanup despite failures, and the
+test consuming application's commit/stop/restart/publication flow.
 
 
 

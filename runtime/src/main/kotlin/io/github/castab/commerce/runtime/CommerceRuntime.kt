@@ -9,6 +9,7 @@ import io.github.castab.commerce.runtime.config.CommerceRuntimeConfiguration.Mig
 import io.github.castab.commerce.runtime.financial.FinancialLedger
 import io.github.castab.commerce.runtime.http.CommerceErrorHandling
 import io.github.castab.commerce.runtime.http.healthRoutes
+import io.github.castab.commerce.runtime.outbox.Outbox
 import io.github.castab.commerce.runtime.persistence.ApplicationMigrations
 import io.github.castab.commerce.runtime.persistence.AuthorizationRepository
 import io.github.castab.commerce.runtime.persistence.FinancialDocumentRepository
@@ -44,7 +45,7 @@ private val logger = KotlinLogging.logger {}
  * The shared runtime pieces an application may build on: configuration, the transaction
  * boundary, commerce-owned [financialDocumentRepository],
  * [paymentRepository], [financialLedger] operations, authenticated principal [sessions],
- * and live [authorization] directory. Application repositories use the same [transactor] and
+ * live [authorization] directory, and transaction-aware [outbox]. Application repositories use the same [transactor] and
  * [io.github.castab.commerce.runtime.persistence.Transaction] the runtime uses.
  *
  * [sessions] is how an application that has verified its own credentials starts a session
@@ -75,6 +76,8 @@ class CommerceRuntimeContext internal constructor(
     val authorization: AuthorizationDirectory,
     val serviceCredentials: ServiceCredentials,
     private val configuredServiceAccessTokens: ServiceAccessTokens?,
+    /** Transaction-aware integration event persistence, added for fionas-commerce. */
+    val outbox: Outbox,
 ) {
     /**
      * Service access tokens. Available only when `serviceTokens` (its signing key) is
@@ -115,11 +118,15 @@ class CommerceRuntimeContext internal constructor(
  *   runtime's built-in `commercePermissionDefinitions` to form the running application's
  *   `PermissionCatalog` (`context.authorization.permissionCatalog`). A key defined twice,
  *   by the application or by both contributors, fails composition before anything starts.
+ * @property backgroundServices Factories constructed after routes, without starting work.
+ *   Services start with the runtime and close in reverse order before its pool. Added for
+ *   fionas-commerce's opt-in outbox dispatcher; factories clean up their own failed construction.
  */
 class ApplicationContributions(
     val migrations: ApplicationMigrations? = null,
     val routes: (CommerceRuntimeContext) -> List<RoutingHttpHandler> = { emptyList() },
     val permissionDefinitions: List<PermissionDefinition> = emptyList(),
+    val backgroundServices: List<(CommerceRuntimeContext) -> ManagedBackgroundService> = emptyList(),
 )
 
 /**
@@ -127,7 +134,8 @@ class ApplicationContributions(
  * serving it, and the connection pool.
  *
  * The runtime manages these resources; it does not own the process. [start] starts Jetty
- * and returns immediately, and [close] stops the server and closes the pool. Blocking,
+ * and contributed background services and returns immediately. [close] stops the server,
+ * closes services in reverse order, and closes the pool. Blocking,
  * shutdown hooks, and the rest of the process lifecycle belong to the application's own
  * `main`.
  */
@@ -136,20 +144,42 @@ class CommerceRuntime internal constructor(
     val http: HttpHandler,
     private val server: Http4kServer,
     private val dataSource: HikariDataSource,
+    private val backgroundServices: List<ManagedBackgroundService> = emptyList(),
 ) : AutoCloseable {
+    private var started = false
+    private var closed = false
+
+    /** Starts HTTP and contributed services once. A failed start closes all resources. */
+    @Synchronized
     fun start(): CommerceRuntime {
-        server.start()
-        logger.info { "event=server_started port=${server.port()}" }
-        return this
+        check(!closed) { "Commerce runtime is closed" }
+        if (started) return this
+        try {
+            server.start()
+            backgroundServices.forEach { it.start() }
+            started = true
+            logger.info { "event=server_started port=${server.port()}" }
+            return this
+        } catch (failure: Throwable) {
+            try {
+                close()
+            } catch (cleanup: Throwable) {
+                failure.addSuppressed(cleanup)
+            }
+            throw failure
+        }
     }
 
     /** The port being served; the actual port after [start] when the configured port is 0. */
     fun port(): Int = server.port()
 
+    /** Stops HTTP, closes services in reverse order, then the pool, even if cleanup fails. */
+    @Synchronized
     override fun close() {
+        if (closed) return
+        closed = true
         logger.info { "event=runtime_stopping" }
-        server.stop()
-        dataSource.close()
+        closeRuntimeResources(server, backgroundServices, dataSource)
         logger.info { "event=runtime_stopped" }
     }
 }
@@ -187,6 +217,8 @@ fun commerceRuntime(
     configuration.validate()
     val permissionCatalog = PermissionCatalog.of(commercePermissionDefinitions, application.permissionDefinitions)
     val dataSource = createDataSource(configuration.database)
+    val backgroundServices = mutableListOf<ManagedBackgroundService>()
+    var server: Http4kServer? = null
     try {
         val migrations = MigrationLifecycle(dataSource, application.migrations)
         when (configuration.migrations.onStartup) {
@@ -224,14 +256,40 @@ fun commerceRuntime(
                 authorization,
                 serviceCredentials,
                 serviceAccessTokens,
+                Outbox(transactor),
             )
 
         val runtimeRoutes = listOf(healthRoutes(ready = { dataSource.isReachable() }))
         val http = CommerceErrorHandling.then(routes(*(runtimeRoutes + application.routes(context)).toTypedArray()))
-        val server = http.asServer(JettyLoom(configuration.server.port))
-        return CommerceRuntime(http, server, dataSource)
-    } catch (e: Exception) {
-        dataSource.close()
+        server = http.asServer(JettyLoom(configuration.server.port))
+        application.backgroundServices.forEach { backgroundServices.add(it(context)) }
+        return CommerceRuntime(http, server, dataSource, backgroundServices.toList())
+    } catch (e: Throwable) {
+        try {
+            closeRuntimeResources(server, backgroundServices, dataSource)
+        } catch (cleanup: Throwable) {
+            e.addSuppressed(cleanup)
+        }
         throw e
     }
+}
+
+private fun closeRuntimeResources(
+    server: Http4kServer?,
+    services: List<ManagedBackgroundService>,
+    dataSource: HikariDataSource,
+) {
+    var failure: Throwable? = null
+
+    fun release(action: () -> Unit) {
+        try {
+            action()
+        } catch (e: Throwable) {
+            if (failure == null) failure = e else failure.addSuppressed(e)
+        }
+    }
+    release { server?.stop() }
+    services.asReversed().forEach { service -> release { service.close() } }
+    release { dataSource.close() }
+    failure?.let { throw it }
 }
