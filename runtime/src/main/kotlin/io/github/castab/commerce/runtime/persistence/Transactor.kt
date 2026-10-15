@@ -80,6 +80,20 @@ enum class TransactionIsolation {
 class Transactor(
     private val jdbi: Jdbi,
 ) {
+    // Delivery must never escape while its claim is still in a caller's transaction.
+    internal fun <T> inIndependentTransaction(block: (Transaction) -> T): T =
+        jdbi.withHandle<T, RuntimeException> { handle ->
+            check(!handle.isInTransaction) { "Outbox delivery operations cannot run inside a managed transaction" }
+            val connection = handle.connection
+            val previousTimeout = connection.networkTimeout
+            try {
+                connection.setNetworkTimeout({ it.run() }, 5_000)
+                handle.inTransaction<T, RuntimeException>(TransactionIsolationLevel.READ_COMMITTED) { block(Transaction(it)) }
+            } finally {
+                if (!connection.isClosed) connection.setNetworkTimeout({ it.run() }, previousTimeout)
+            }
+        }
+
     /** Runs [block] in one transaction at the runtime's default isolation. */
     fun <T> inTransaction(block: (Transaction) -> T): T =
         jdbi.inTransaction<T, RuntimeException> { handle ->

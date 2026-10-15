@@ -74,7 +74,7 @@ class AuthorizationDirectorySpec :
             withTestDatabase { database, dataSource ->
                 commerceRuntime(database.configuration(), ApplicationContributions()).use {
                     dataSource.appliedVersions("commerce") shouldBe
-                        listOf("1")
+                        listOf("1", "2")
                     listOf("principals", "users", "service_identities", "roles", "role_permissions", "principal_roles")
                         .forEach { table -> dataSource.relationExists("commerce.$table") shouldBe true }
                     shouldThrow<Exception> {

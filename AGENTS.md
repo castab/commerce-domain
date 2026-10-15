@@ -217,6 +217,41 @@ approved deposit requirements, principals, sessions, roles, and service credenti
 upgrade compatibility is promised. Runtime and application streams remain independent.
 Products, selection constraints, availability, pricing, and catalogs belong to applications.
 
+`V2__transactional_outbox.sql` adds the runtime-owned transactional outbox without editing
+V1. This is delivery coordination infrastructure, entirely in `runtime.outbox`, not a new
+domain event hierarchy. `CommerceRuntimeContext.outbox` and opt-in
+`ApplicationContributions.backgroundServices` were added for `fionas-commerce`: it needs
+to append application events alongside its business/financial writes and dispatch after
+commit using the same pool. No business event schemas or transport adapters live here.
+
+Outbox append takes the caller's `Transaction` and never publishes or commits. Event IDs
+are globally unique; duplicates conflict, including identical content. Applications own
+command idempotency. Immutable content is exact Unicode text with microsecond timestamps;
+do not reinterpret it as JSONB or reconstruct it from current financial facts. A trigger
+protects the envelope and confirmed publication. Counters serialize append transactions
+per `(producer, aggregate type, aggregate id)` until commit and roll back with them.
+Never replace them with nontransactional sequences or query ordering alone. Multi-aggregate
+transactions use consistent lock order. Claim only unpublished aggregate heads through
+short READ COMMITTED transactions with SKIP LOCKED and explicitly scoped producer identity.
+Never hold locks across transport I/O. Expired claims recover on the next claim. Confirm/fail
+atomically compare the claim token, producer, ID, live lease, and unpublished state; stale
+workers must change nothing. Delivery operations reject an open managed transaction.
+
+Only explicit transport confirmation finalizes publication. Ambiguous results, crashes,
+timeouts, and exceptions retain events with stable identity/content for at-least-once
+retry; never promise exactly-once or let attempt exhaustion discard pending events. Use
+bounded exponential retry and closed diagnostic codes, never payloads/exception messages
+in logs. Bound transport calls, database waits, executor capacity, and shutdown. Consumers
+deduplicate durably and handle sequences, including late duplicate transport sends.
+`Outbox.backlog` is payload-free and producer-scoped; no administration HTTP API or purge
+is included. Any future retention policy must retain all unpublished events and counters.
+
+Managed background-service factories receive the existing context and construct without
+starting work. Start HTTP then services; stop HTTP, close services in reverse order, then
+close the pool. Clean up partial construction/start, attempt every cleanup despite errors,
+and preserve suppressed failures. `close` is bounded, idempotent, and valid before start.
+The runtime still owns no process, shutdown hook, default service, or general scheduler.
+
 The first financial-ledger slice persists immutable financial-document snapshots,
 payment records, and payment allocations in the runtime-owned `commerce` schema. The
 document's line items remain the source of its derived totals; payment allocations
@@ -669,7 +704,7 @@ booking lifecycle itself, it probably does not belong in the booking lifecycle A
 | `runtime/src/main/kotlin/io/github/castab/commerce/runtime/session/` | `PrincipalSession`, `SessionId`, `IssuedSession`, `SessionToken` (and the internal `SessionTokenDigest`), `SessionManager` and its internal PostgreSQL implementation, and `SessionAuthentication.kt` (token extractors, `SessionCookie`, `SessionAuthenticator`, `sessionAuthentication`). |
 | `runtime/src/main/kotlin/io/github/castab/commerce/runtime/operation/` | Operation support: `CommerceFailure` and `validating`. |
 | `runtime/src/main/kotlin/io/github/castab/commerce/runtime/http/` | `CommerceJson`, the error contract and filter, health routes, `Authentication.kt` (`RequestAuthenticator`, `authentication`), and `Authorization.kt` (the `authenticatedPrincipal` lens, `requirePermission`, `requireAuthenticatedPrincipal`, `AccessControl`). |
-| `runtime/src/main/resources/` | Only the fresh `db/commerce/V1__commerce_baseline.sql`: finance, deposits, sessions, authorization, and service credentials. No deployment or logging configuration. |
+| `runtime/src/main/resources/` | Runtime migrations only: `db/commerce/V1__commerce_baseline.sql` and additive `V2__transactional_outbox.sql`. No deployment or logging configuration. |
 | `runtime/src/test/kotlin/io/github/castab/commerce/runtime/` | Kotest specs for configuration, errors, health, serialization, persistence and transactions, the migration contract (`persistence/MigrationLifecycleSpec`, `CommerceRuntimeStartupSpec`), and `CommerceRuntimeSpec` (the runtime composed with explicit contributions and an application-owned table, over real HTTP); `testing/TestDatabase.kt` and `testing/Databases.kt`. |
 | `runtime/src/test/kotlin/io/github/castab/commerce/runtime/persistence/FinancialDocumentRepositorySpec.kt` | One-row snapshot round trips, the stored lines shape, malformed-lines rejection, history and latest reads, successor conflicts, and payment allocations' exact-version reference. |
 | `runtime/src/test/kotlin/io/github/castab/commerce/runtime/persistence/PrincipalSessionRepositorySpec.kt` | Session table and indexes, `UserId` and `ServiceId` round trips, digest-only storage and uniqueness, revocation, and caller-transaction atomicity. |
@@ -1786,8 +1821,8 @@ These are intentionally unresolved. Do not settle them incidentally.
   tokens when their credential is revoked, signing-key rotation with several verification
   keys, and credential last-use tracking. So is purging expired and
   revoked session rows: the purge itself would be a runtime capability, while when and how
-  often to run it is application or deployment policy; the runtime adds no background jobs
-  or schedulers. Do not settle these incidentally.
+  often to run it is application or deployment policy; the opt-in managed-service seam
+  schedules no purge and provides no general scheduler. Do not settle these incidentally.
 - **Capability selection (intentionally deferred).** The runtime currently serves only its
   infrastructure routes, `/health` and `/ready`, which stay enabled. Any future commerce
   routes would be served by every runtime. Whether and how an application selects commerce
