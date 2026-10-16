@@ -139,10 +139,12 @@ refunds, principals, roles, and sessions remain relational independent facts. Th
 must be recreated rather than repaired. See the
 [runtime persistence notes](runtime/README.md#aggregate-snapshot-persistence).
 
-The additive `V2__transactional_outbox.sql` provides runtime-owned integration event storage.
-Applications append immutable events through `context.outbox.append(transaction, event)`
-alongside their business and financial writes. Opt-in background services dispatch them
-through an application-supplied transport with per-aggregate sequencing, fenced leases,
+The additive `V2__transactional_outbox.sql` provides runtime-owned integration event storage;
+`V3__outbox_jsonb_payload.sql` establishes immutable JSONB object payloads. Applications
+append alongside business and financial writes, using `append(transaction, draft) { sequence ->
+jsonObject }` when their event document needs the runtime-assigned aggregate sequence,
+or direct `append(transaction, event)` with a typed JSON object otherwise. Opt-in background
+services dispatch them through an application-supplied transport with per-aggregate sequencing, fenced leases,
 durable retry, and at-least-once delivery. Runtime starts/stops these services with HTTP
 and closes them before its existing pool; applications still own event contracts, producer
 identity, transport configuration, and process lifecycle. See the

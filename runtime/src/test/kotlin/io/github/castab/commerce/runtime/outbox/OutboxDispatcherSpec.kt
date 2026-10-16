@@ -2,6 +2,7 @@ package io.github.castab.commerce.runtime.outbox
 
 import io.github.castab.commerce.runtime.testing.capturingStandardOutput
 import io.github.castab.commerce.runtime.testing.execute
+import io.github.castab.commerce.runtime.testing.strings
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldNotContain
@@ -116,7 +117,9 @@ class OutboxDispatcherSpec :
         test("lost acknowledgment and restart redeliver the identical event and aggregate sequence") {
             withOutbox { fixture, outbox ->
                 val original = testEvent(payload = "{  \"value\": 1.00, \"contact\": \"PRIVATE\" }\n")
-                fixture.transactor.inTransaction { outbox.append(it, original) }
+                val stored = fixture.transactor.inTransaction { outbox.append(it, original) }
+                val storedJson = fixture.dataSource.strings("SELECT payload::text FROM commerce.outbox_events").single()
+                stored.payloadJson shouldBe storedJson
                 val delivered = CopyOnWriteArrayList<RecordedOutboxEvent>()
                 val first =
                     OutboxDispatcher(
@@ -149,6 +152,8 @@ class OutboxDispatcherSpec :
                 delivered.size shouldBe 2
                 delivered.forEach {
                     it.event shouldBe original
+                    it.payloadJson shouldBe storedJson
+                    it.payloadJson.toByteArray(Charsets.UTF_8).toList() shouldBe storedJson.toByteArray(Charsets.UTF_8).toList()
                     it.aggregateSequence shouldBe 1L
                     it.recordedAt shouldBe delivered.first().recordedAt
                 }
@@ -181,7 +186,7 @@ class OutboxDispatcherSpec :
 
         test("transport exceptions retain events indefinitely and logs exclude payload and exception secrets") {
             withOutbox { fixture, outbox ->
-                fixture.transactor.inTransaction { outbox.append(it, testEvent(payload = "PRIVATE_PAYLOAD")) }
+                fixture.transactor.inTransaction { outbox.append(it, testEvent(payload = """{"secret":"PRIVATE_PAYLOAD"}""")) }
                 val failures = CountDownLatch(4)
                 val output =
                     capturingStandardOutput {

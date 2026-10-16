@@ -4,8 +4,12 @@ import io.github.castab.commerce.runtime.operation.CommerceFailure
 import io.github.castab.commerce.runtime.outbox.OutboxBacklog
 import io.github.castab.commerce.runtime.outbox.OutboxClaim
 import io.github.castab.commerce.runtime.outbox.OutboxEvent
+import io.github.castab.commerce.runtime.outbox.OutboxEventDraft
 import io.github.castab.commerce.runtime.outbox.OutboxFailureCode
 import io.github.castab.commerce.runtime.outbox.RecordedOutboxEvent
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import org.jdbi.v3.core.statement.UnableToExecuteStatementException
 import java.sql.ResultSet
 import java.time.Duration
@@ -17,7 +21,8 @@ import java.util.UUID
 internal class OutboxRepository {
     fun append(
         transaction: Transaction,
-        event: OutboxEvent,
+        draft: OutboxEventDraft,
+        payloadFactory: (Long) -> JsonObject,
     ): RecordedOutboxEvent {
         try {
             val sequence =
@@ -28,28 +33,29 @@ internal class OutboxRepository {
                        ON CONFLICT (producer_id, aggregate_type, aggregate_id)
                        DO UPDATE SET last_sequence = commerce.outbox_aggregates.last_sequence + 1
                        RETURNING last_sequence""",
-                    ).bind("producer", event.producerId)
-                    .bind("type", event.aggregateType)
-                    .bind("aggregate", event.aggregateId)
+                    ).bind("producer", draft.producerId)
+                    .bind("type", draft.aggregateType)
+                    .bind("aggregate", draft.aggregateId)
                     .mapTo(Long::class.java)
                     .one()
+            val event = draft.event(payloadFactory(sequence))
             return transaction.handle
                 .createQuery(
                     """INSERT INTO commerce.outbox_events
                    (id, producer_id, aggregate_type, aggregate_id, aggregate_sequence,
                     event_type, schema_version, destination, payload, occurred_at)
                    VALUES (:id, :producer, :type, :aggregate, :sequence, :eventType,
-                           :version, :destination, :payload, :occurred)
+                           :version, :destination, CAST(:payload AS jsonb), :occurred)
                    RETURNING *""",
                 ).bind("id", event.id)
-                .bind("producer", event.producerId)
-                .bind("type", event.aggregateType)
-                .bind("aggregate", event.aggregateId)
+                .bind("producer", draft.producerId)
+                .bind("type", draft.aggregateType)
+                .bind("aggregate", draft.aggregateId)
                 .bind("sequence", sequence)
                 .bind("eventType", event.eventType)
                 .bind("version", event.schemaVersion)
                 .bind("destination", event.destination)
-                .bind("payload", event.payload)
+                .bind("payload", event.payload.toString())
                 .bind("occurred", event.occurredAt.atOffset(ZoneOffset.UTC))
                 .map { rows, _ -> record(rows) }
                 .one()
@@ -197,10 +203,11 @@ internal class OutboxRepository {
                 rows.getString("event_type"),
                 rows.getInt("schema_version"),
                 rows.getString("destination"),
-                rows.getString("payload"),
+                Json.parseToJsonElement(rows.getString("payload")).jsonObject,
                 rows.getObject("occurred_at", OffsetDateTime::class.java).toInstant(),
             ),
             rows.getLong("aggregate_sequence"),
             rows.getObject("recorded_at", OffsetDateTime::class.java).toInstant(),
+            rows.getString("payload"),
         )
 }

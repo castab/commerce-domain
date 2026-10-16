@@ -1,16 +1,21 @@
 package io.github.castab.commerce.runtime.outbox
 
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 /**
- * Application-owned integration content, persisted verbatim as UTF-8 PostgreSQL text.
+ * Application-owned JSON object content, normalized and persisted as PostgreSQL JSONB.
  * IDs are globally unique and established by the caller once. No business semantics are
  * inferred from this envelope. Do not put transport credentials in it.
  *
  * [occurredAt] must have microsecond precision (PostgreSQL's precision). Payloads must be
- * valid Unicode text without NUL. [toString] deliberately excludes all application content.
+ * JSON objects with Unicode strings and keys without NUL. [toString] deliberately excludes
+ * all application content.
  */
 data class OutboxEvent(
     val id: UUID,
@@ -20,7 +25,29 @@ data class OutboxEvent(
     val eventType: String,
     val schemaVersion: Int,
     val destination: String,
-    val payload: String,
+    val payload: JsonObject,
+    val occurredAt: Instant,
+) {
+    init {
+        draft() // Validate metadata before persistence.
+        validatePayload(payload)
+    }
+
+    internal fun draft(): OutboxEventDraft =
+        OutboxEventDraft(id, producerId, aggregateType, aggregateId, eventType, schemaVersion, destination, occurredAt)
+
+    override fun toString(): String = "OutboxEvent(id=$id)"
+}
+
+/** Metadata validated before allocating a sequence; applications own the JSON schema. */
+data class OutboxEventDraft(
+    val id: UUID,
+    val producerId: String,
+    val aggregateType: String,
+    val aggregateId: String,
+    val eventType: String,
+    val schemaVersion: Int,
+    val destination: String,
     val occurredAt: Instant,
 ) {
     init {
@@ -34,10 +61,12 @@ data class OutboxEvent(
         require(occurredAt >= Instant.parse("0001-01-01T00:00:00Z") && occurredAt < Instant.parse("+10000-01-01T00:00:00Z")) {
             "Outbox timestamp must be in years 1 through 9999"
         }
-        require('\u0000' !in payload && payload.isWellFormedUnicode()) { "Outbox payload must be Unicode text without NUL" }
     }
 
-    override fun toString(): String = "OutboxEvent(id=$id)"
+    internal fun event(payload: JsonObject): OutboxEvent =
+        OutboxEvent(id, producerId, aggregateType, aggregateId, eventType, schemaVersion, destination, payload, occurredAt)
+
+    override fun toString(): String = "OutboxEventDraft(id=$id)"
 }
 
 /** The immutable envelope plus its transactionally assigned ordering and append metadata. */
@@ -45,6 +74,12 @@ class RecordedOutboxEvent internal constructor(
     val event: OutboxEvent,
     val aggregateSequence: Long,
     val recordedAt: Instant,
+    /**
+     * PostgreSQL's stored JSONB text, the authoritative publication representation.
+     * Send its UTF-8 bytes unchanged on every attempt; never reconstruct from business state.
+     * Original producer whitespace, key order, and numeric formatting are not preserved.
+     */
+    val payloadJson: String,
 )
 
 /** One committed lease. Its token fences bookkeeping after another process reclaims it. */
@@ -90,4 +125,20 @@ private fun String.isWellFormedUnicode(): Boolean {
         }
     }
     return true
+}
+
+private fun validatePayload(value: JsonElement) {
+    when (value) {
+        is JsonObject ->
+            value.forEach { (key, child) ->
+                validatePayloadString(key)
+                validatePayload(child)
+            }
+        is JsonArray -> value.forEach(::validatePayload)
+        is JsonPrimitive -> validatePayloadString(value.content)
+    }
+}
+
+private fun validatePayloadString(value: String) {
+    require('\u0000' !in value && value.isWellFormedUnicode()) { "Outbox JSON strings must be Unicode text without NUL" }
 }
