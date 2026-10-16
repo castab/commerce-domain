@@ -440,10 +440,12 @@ It creates no product or catalog tables.
 `V2__transactional_outbox.sql` additively creates `commerce.outbox_aggregates` and
 `commerce.outbox_events`, their indexes, and an immutable-envelope trigger. It upgrades
 both empty and populated V1 databases; V1 is unchanged. It creates no application tables.
+`V3__outbox_jsonb_payload.sql` converts V2 JSON objects to JSONB and rejects invalid or
+non-object historical payloads. See [Transactional outbox](#transactional-outbox).
 
-Existing developer databases must be recreated, including application schemas and both
-Flyway histories. This release does not upgrade old databases; do not use repair or
-baselineOnMigrate to hide mismatches. Runtime-before-application orchestration and startup
+Developer databases predating the catalog-removal V1 baseline must be recreated, including
+application schemas and both Flyway histories. That baseline does not upgrade old databases;
+do not use repair or baselineOnMigrate to hide mismatches. Runtime-before-application orchestration and startup
 MIGRATE/VALIDATE behavior are unchanged. [Reset and consumer instructions](../CATALOG_REMOVAL.md).
 Future released migrations are append-only.
 
@@ -830,6 +832,14 @@ block. Only the outer call chooses the isolation.
 
 ### Transactional outbox
 
+`V3__outbox_jsonb_payload.sql` converts the released V2 payload column from text to
+JSONB and requires top-level objects, preserving valid historical JSON objects and all
+metadata/delivery state. V1 and V2 are unchanged. Invalid JSON, scalar/array documents,
+unsupported Unicode, or out-of-range JSONB numbers cause migration failure; no content is
+silently replaced or discarded. Developer databases with incompatible history must be
+explicitly repaired under an application-approved policy or recreated before upgrading.
+No payload index or transitional column is added.
+
 `context.outbox` persists application-owned integration events in the same transaction
 as application rows and financial operations. This is runtime persistence/delivery
 coordination, not domain vocabulary: neither domain models nor ledger mutations emit
@@ -840,7 +850,7 @@ is included.
 
 ```kotlin
 // The application establishes this envelope once for the successful business command.
-val event = OutboxEvent(
+val draft = OutboxEventDraft(
     id = eventId,                         // stable globally unique UUID
     producerId = "myapp",                // stable logical namespace, shared by its instances
     aggregateType = "order",             // application vocabulary
@@ -848,14 +858,21 @@ val event = OutboxEvent(
     eventType = "OrderAccepted",
     schemaVersion = 1,
     destination = "myapp.orders",
-    payload = serializedApplicationEvent, // exact text, including whitespace and decimals
     occurredAt = occurredAt.truncatedTo(ChronoUnit.MICROS),
 )
 context.transactor.inTransaction { transaction ->
     // Authorize and recognize previously committed commands before making new writes.
     applicationRepository.save(transaction, order)
     context.financialLedger.create(transaction, document)
-    val recorded = context.outbox.append(transaction, event)
+    val recorded = context.outbox.append(transaction, draft) { sequence ->
+        // Application-owned contract; runtime does not require any of these JSON fields.
+        buildJsonObject {
+            put("id", draft.id.toString())
+            put("occurredAt", draft.occurredAt.toString())
+            put("sequence", sequence)
+            put("data", applicationEventData) // JsonObject built from authorized business facts
+        }
+    }
     // recorded.aggregateSequence and recorded.recordedAt are durable on commit.
 }
 ```
@@ -864,10 +881,28 @@ context.transactor.inTransaction { transaction ->
 An existing event ID always raises `CommerceFailure.Conflict`, even for identical content;
 there is no silent replacement or automatic command deduplication. Retry an aborted
 business transaction as a whole. Recognizing a committed command should return its prior
-result without appending again. Payloads are valid Unicode text without NUL, preserved as
-PostgreSQL `text`, not parsed or converted to JSONB. Timestamps use microsecond precision
-and years 1–9999; identifiers are validated, bounded strings. Event `toString()` excludes
-application content. Immutable columns and confirmed publication are protected by a database
+result without appending again. The synchronous factory receives the allocated positive
+sequence exactly once on a successful append attempt, before insertion and commit. It must
+be deterministic for the supplied facts and sequence and perform no external side effects
+or network I/O. The runtime does not retry failed factories. Let any failure escape the
+caller transaction so business writes, the counter, and the event all roll back.
+
+Payloads are typed `kotlinx.serialization.json.JsonObject` documents stored in PostgreSQL
+`jsonb`, with a database top-level-object check. Nested objects, arrays, booleans, numbers,
+and null are supported; strings and keys must be valid Unicode without NUL. PostgreSQL
+also enforces its JSONB numeric limits. No application schema or JSON paths are enforced.
+JSONB preserves structured content, not original whitespace, key ordering, or numeric
+spelling. The returned `recorded.event.payload` is parsed from persisted JSONB;
+`recorded.payloadJson` is that same stored PostgreSQL text and is the authoritative
+publication representation. Publish `recorded.payloadJson.toByteArray(Charsets.UTF_8)`
+unchanged on every attempt. Never rebuild it from business state or enrich it in transport.
+
+Direct append remains available as `append(transaction, OutboxEvent(..., payload = jsonObject,
+...))` when the payload does not need the allocated sequence. This is a source-breaking
+change from v0.0.24's String payload. Consumers should construct `JsonObject` values (or
+parse existing serialization once) and update adapters to use `record.payloadJson`.
+Timestamps use microsecond precision and years 1–9999; identifiers are validated, bounded
+strings. Event `toString()` excludes application content. Immutable columns and confirmed publication are protected by a database
 trigger. There is no mutation or deletion API for event content.
 
 Each `(producerId, aggregateType, aggregateId)` has a durable counter row. Append's upsert
@@ -924,8 +959,9 @@ durable transport acceptance. An attempted send, ambiguous response, timeout, or
 loss is not confirmation: return `UNCONFIRMED` or throw. A future application NATS adapter
 must validate JetStream's PubAck for the expected stream and use `record.event.id` as
 `Nats-Msg-Id`; neither the runtime nor this PR implements that adapter. Pass destination
-and exact payload unchanged and include the sequence in the application's transport
-envelope/headers. Configure finite adapter I/O timeouts and honor interruption.
+and `record.payloadJson` as unchanged UTF-8 bytes. Include authoritative sequence in
+application payloads through the append factory, or in transport headers as needed.
+Configure finite adapter I/O timeouts and honor interruption.
 
 The dispatcher claims a bounded batch (1–100) in a short `READ COMMITTED` transaction using
 `FOR UPDATE SKIP LOCKED`. Only the earliest unpublished sequence of each aggregate is
@@ -963,7 +999,12 @@ again. A superseded token can never finalize the newer claim. Aggregate successo
 be attempted before their predecessor is confirmed, but delayed duplicate transport sends
 can still arrive after later sequences. Transport routing must preserve ordering where
 needed, and consumers need durable idempotency and sequence-aware handling. Broker
-deduplication windows alone are insufficient. A permanent failure intentionally blocks its
+deduplication windows alone are insufficient. Events should be self-contained for their
+intended business meaning without replaying earlier events. `occurredAt` and sequence
+provide temporal context. Consumers independently decide whether to apply historical
+facts, ignore stale snapshots, record unique financial facts, or reconcile authoritative
+state; they need not process every event in strict sequence. Runtime sequencing does not
+replace consumer business correctness. A permanent failure intentionally blocks its
 aggregate until the application/operator repairs the transport or destination.
 
 Operators can read `context.outbox.backlog("myapp")` or its caller-transaction overload.
@@ -1778,10 +1819,14 @@ deterministic ordering (including equal receipt times), the immutability and clo
 construction of `PaymentHistory`, reads inside an uncommitted caller transaction, and the
 `REPEATABLE_READ` isolation of the convenience reads. `MigrationLifecycleSpec` also verifies the exact fresh schema and subsequent validation.
 
-`OutboxSpec` verifies cross-schema business/financial/event atomicity, exact text and
+`OutboxJsonbSpec` verifies native JSONB/object constraints, nested Unicode content,
+V2-to-V3 migration and incompatible-history failure, persisted publication bytes, the
+sequence-aware factory, and rollback after factory, validation, insertion, and business
+failures. `OutboxSpec` verifies cross-schema business/financial/event atomicity, JSON and
 timestamp round trips, immutable content, duplicate conflicts, aggregate serialization
 (observed PostgreSQL lock waits), parallel claims, namespace isolation, expiry, fencing,
-and populated V1 migration. `OutboxDispatcherSpec` verifies confirmed acceptance, exceptions,
+complete repeatable-read operation retry, and populated V1 migration. `OutboxDispatcherSpec`
+verifies confirmed acceptance, exceptions,
 ambiguous acceptance, failed database finalization after external success, stable identity
 on retry, independent aggregate progress, and bounded shutdown with a hung transport.
 `BackgroundServiceSpec` verifies lifecycle ordering, cleanup despite failures, and the

@@ -4,6 +4,7 @@ import io.github.castab.commerce.runtime.persistence.OutboxRepository
 import io.github.castab.commerce.runtime.persistence.Transaction
 import io.github.castab.commerce.runtime.persistence.Transactor
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.serialization.json.JsonObject
 import java.time.Duration
 
 private val logger = KotlinLogging.logger {}
@@ -27,7 +28,23 @@ class Outbox internal constructor(
     fun append(
         transaction: Transaction,
         event: OutboxEvent,
-    ): RecordedOutboxEvent = repository.append(transaction, event)
+    ): RecordedOutboxEvent = repository.append(transaction, event.draft()) { event.payload }
+
+    /**
+     * Allocates the next positive sequence, then calls [payloadFactory] synchronously once
+     * and inserts its JSON object in the caller's transaction. The returned content is read
+     * from persisted JSONB. No callback retry is performed. Let failures escape the business
+     * transaction so business writes, sequence allocation, and insertion roll back together.
+     *
+     * The factory must be deterministic for the supplied facts and sequence, with no external
+     * side effects or network I/O. Retry conflicts by retrying the entire business operation.
+     * The same duplicate-ID and aggregate lock-order rules as direct append apply.
+     */
+    fun append(
+        transaction: Transaction,
+        draft: OutboxEventDraft,
+        payloadFactory: (Long) -> JsonObject,
+    ): RecordedOutboxEvent = repository.append(transaction, draft, payloadFactory)
 
     /** A delivery coordinator bound explicitly to a logical producer and a process identity. */
     fun publisher(

@@ -85,7 +85,7 @@ class MigrationLifecycleSpec :
 
                 // Runtime V1 coexists with application V1 in separate version spaces.
                 dataSource.appliedVersions(RuntimeMigrations.SCHEMA) shouldContainExactly
-                    listOf("1", "2")
+                    listOf("1", "2", "3")
                 dataSource.appliedVersions(TEST_APPLICATION_SCHEMA) shouldContainExactly listOf("1")
             }
         }
@@ -331,7 +331,7 @@ class MigrationLifecycleSpec :
                     dataSource.relationExists("public.test_application_records") shouldBe false
                     // Independent histories and version spaces.
                     dataSource.appliedVersions(RuntimeMigrations.SCHEMA) shouldContainExactly
-                        listOf("1", "2")
+                        listOf("1", "2", "3")
                     dataSource.appliedVersions(TEST_APPLICATION_SCHEMA) shouldContainExactly listOf("1")
                 }
             }

@@ -226,8 +226,17 @@ commit using the same pool. No business event schemas or transport adapters live
 
 Outbox append takes the caller's `Transaction` and never publishes or commits. Event IDs
 are globally unique; duplicates conflict, including identical content. Applications own
-command idempotency. Immutable content is exact Unicode text with microsecond timestamps;
-do not reinterpret it as JSONB or reconstruct it from current financial facts. A trigger
+command idempotency. `V3__outbox_jsonb_payload.sql` converts payloads to immutable JSONB
+objects; valid historical objects survive, invalid/non-object history fails migration.
+Applications own schemas; runtime validates general metadata, Unicode strings without NUL,
+and object structure. Original whitespace, key order, and numeric formatting are not preserved.
+`OutboxEvent.payload` is a `JsonObject`. Sequence-aware append takes `OutboxEventDraft`
+and a synchronous `(Long) -> JsonObject` factory, invoked once after transactional sequence
+allocation and before insertion. Factories must be deterministic and perform no external side
+effects or network I/O. Let failures roll back the entire caller transaction; runtime does
+not retry callbacks. Direct append shares this path. `RecordedOutboxEvent.payloadJson` is
+PostgreSQL's stored JSONB text: publish its UTF-8 bytes unchanged on retries, never enrich
+or reconstruct from current financial facts. Timestamps retain microsecond precision. A trigger
 protects the envelope and confirmed publication. Counters serialize append transactions
 per `(producer, aggregate type, aggregate id)` until commit and roll back with them.
 Never replace them with nontransactional sequences or query ordering alone. Multi-aggregate
@@ -243,6 +252,11 @@ retry; never promise exactly-once or let attempt exhaustion discard pending even
 bounded exponential retry and closed diagnostic codes, never payloads/exception messages
 in logs. Bound transport calls, database waits, executor capacity, and shutdown. Consumers
 deduplicate durably and handle sequences, including late duplicate transport sends.
+Events should be self-contained for their intended business meaning without replaying
+predecessors. Consumers independently interpret occurredAt and sequence: apply historical
+facts, ignore stale snapshots, record unique financial facts, or reconcile authoritative
+state. They need not process every event in strict sequence; runtime ordering does not
+replace their business correctness policies.
 `Outbox.backlog` is payload-free and producer-scoped; no administration HTTP API or purge
 is included. Any future retention policy must retain all unpublished events and counters.
 
@@ -704,7 +718,7 @@ booking lifecycle itself, it probably does not belong in the booking lifecycle A
 | `runtime/src/main/kotlin/io/github/castab/commerce/runtime/session/` | `PrincipalSession`, `SessionId`, `IssuedSession`, `SessionToken` (and the internal `SessionTokenDigest`), `SessionManager` and its internal PostgreSQL implementation, and `SessionAuthentication.kt` (token extractors, `SessionCookie`, `SessionAuthenticator`, `sessionAuthentication`). |
 | `runtime/src/main/kotlin/io/github/castab/commerce/runtime/operation/` | Operation support: `CommerceFailure` and `validating`. |
 | `runtime/src/main/kotlin/io/github/castab/commerce/runtime/http/` | `CommerceJson`, the error contract and filter, health routes, `Authentication.kt` (`RequestAuthenticator`, `authentication`), and `Authorization.kt` (the `authenticatedPrincipal` lens, `requirePermission`, `requireAuthenticatedPrincipal`, `AccessControl`). |
-| `runtime/src/main/resources/` | Runtime migrations only: `db/commerce/V1__commerce_baseline.sql` and additive `V2__transactional_outbox.sql`. No deployment or logging configuration. |
+| `runtime/src/main/resources/` | Runtime migrations only: `db/commerce/V1__commerce_baseline.sql` and additive `V2__transactional_outbox.sql`, `V3__outbox_jsonb_payload.sql`. No deployment or logging configuration. |
 | `runtime/src/test/kotlin/io/github/castab/commerce/runtime/` | Kotest specs for configuration, errors, health, serialization, persistence and transactions, the migration contract (`persistence/MigrationLifecycleSpec`, `CommerceRuntimeStartupSpec`), and `CommerceRuntimeSpec` (the runtime composed with explicit contributions and an application-owned table, over real HTTP); `testing/TestDatabase.kt` and `testing/Databases.kt`. |
 | `runtime/src/test/kotlin/io/github/castab/commerce/runtime/persistence/FinancialDocumentRepositorySpec.kt` | One-row snapshot round trips, the stored lines shape, malformed-lines rejection, history and latest reads, successor conflicts, and payment allocations' exact-version reference. |
 | `runtime/src/test/kotlin/io/github/castab/commerce/runtime/persistence/PrincipalSessionRepositorySpec.kt` | Session table and indexes, `UserId` and `ServiceId` round trips, digest-only storage and uniqueness, revocation, and caller-transaction atomicity. |

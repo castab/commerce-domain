@@ -22,7 +22,9 @@ enum class PublicationResult {
 /**
  * Application-supplied delivery. Use the unchanged event ID as the transport deduplication
  * identity. Return CONFIRMED only after verifying the broker's positive acknowledgment;
- * sending bytes is insufficient. Configure adapter I/O timeouts and honor interruption.
+ * sending bytes is insufficient. Publish [RecordedOutboxEvent.payloadJson] as UTF-8 unchanged;
+ * do not enrich the payload or rebuild it from business state. Configure finite adapter I/O
+ * timeouts and honor interruption.
  * No Transaction is passed: publication always happens outside database transactions.
  */
 fun interface OutboxTransport {

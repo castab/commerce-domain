@@ -17,6 +17,12 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
 import org.flywaydb.core.Flyway
 import org.jdbi.v3.core.Jdbi
 import java.time.Duration
@@ -31,23 +37,43 @@ import java.util.concurrent.TimeUnit
 
 class OutboxSpec :
     FunSpec({
-        test("a stale repeatable-read append conflicts and leaves committed ordering intact") {
+        test("a stale repeatable-read operation rolls back and retries with authoritative sequence content") {
             withOutbox { fixture, outbox ->
-                fixture.transactor.inTransaction { outbox.append(it, testEvent(aggregate = "same")) }
-                shouldThrow<CommerceFailure.Conflict> {
+                fixture.transactor.inTransaction { outbox.append(it, testEvent(aggregate = "same").draft(), ::sequencePayload) }
+                val draft = testEvent(aggregate = "same").draft()
+                var factoryCalls = 0
+
+                fun operation(conflict: Boolean) =
                     fixture.transactor.inTransaction(TransactionIsolation.REPEATABLE_READ) { tx ->
                         tx.handle
                             .createQuery("SELECT last_sequence FROM commerce.outbox_aggregates")
                             .mapTo(Long::class.java)
-                            .one() shouldBe 1L
-                        fixture.onOtherThread {
-                            fixture.transactor.inTransaction { outbox.append(it, testEvent(aggregate = "same")) }
+                            .one() shouldBe if (conflict) 1L else 2L
+                        tx.handle
+                            .createUpdate("INSERT INTO testapp.test_application_records VALUES (:id, 'business')")
+                            .bind("id", draft.id)
+                            .execute()
+                        if (conflict) {
+                            fixture.onOtherThread {
+                                fixture.transactor.inTransaction {
+                                    outbox.append(it, testEvent(aggregate = "same").draft(), ::sequencePayload)
+                                }
+                            }
                         }
-                        outbox.append(tx, testEvent(aggregate = "same"))
+                        outbox.append(tx, draft) { sequence ->
+                            factoryCalls++
+                            sequencePayload(sequence)
+                        }
                     }
-                }
-                val next = fixture.transactor.inTransaction { outbox.append(it, testEvent(aggregate = "same")) }
+                shouldThrow<CommerceFailure.Conflict> { operation(true) }
+                factoryCalls shouldBe 0 // Sequence allocation fails before invoking application code.
+                fixture.dataSource.strings("SELECT count(*) FROM testapp.test_application_records").single() shouldBe "0"
+                val next = operation(false) // Retry the complete business operation with the same identity.
+                factoryCalls shouldBe 1
                 next.aggregateSequence shouldBe 3L
+                next.event.payload["sequence"]!!
+                    .jsonPrimitive.long shouldBe 3L
+                fixture.dataSource.strings("SELECT count(*) FROM testapp.test_application_records").single() shouldBe "1"
                 outbox.backlog("example").unpublished shouldBe 3L
             }
         }
@@ -99,8 +125,8 @@ class OutboxSpec :
                                 .bind("id", command)
                                 .execute()
                         if (inserted == 0) return@inTransaction
-                        outbox.append(tx, event).aggregateSequence shouldBe 1L
-                        outbox.append(tx, testEvent(aggregate = event.aggregateId)).aggregateSequence shouldBe 2L
+                        outbox.append(tx, event.draft(), ::sequencePayload).aggregateSequence shouldBe 1L
+                        outbox.append(tx, testEvent(aggregate = event.aggregateId).draft(), ::sequencePayload).aggregateSequence shouldBe 2L
                         if (fail) error("abort business operation")
                     }
                 shouldThrow<IllegalStateException> { operation(true) }
@@ -119,7 +145,7 @@ class OutboxSpec :
             withOutbox { fixture, outbox ->
                 val event = testEvent(payload = "{\n  \"exact\": 1.00, \"unicode\": \"☕\"\n}\n")
                 fixture.transactor.inTransaction { outbox.append(it, event) }
-                listOf(event, event.copy(payload = "conflicting")).forEach { duplicate ->
+                listOf(event, event.copy(payload = buildJsonObject { put("conflicting", true) })).forEach { duplicate ->
                     shouldThrow<CommerceFailure.Conflict> {
                         fixture.transactor.inTransaction { outbox.append(it, duplicate) }
                     }
@@ -131,7 +157,11 @@ class OutboxSpec :
                 claim.record.event shouldBe event
                 claim.record.aggregateSequence shouldBe 1L
                 shouldThrow<Exception> {
-                    fixture.transactor.inTransaction { it.handle.execute("UPDATE commerce.outbox_events SET payload = 'changed'") }
+                    fixture.transactor.inTransaction {
+                        it.handle.execute(
+                            """UPDATE commerce.outbox_events SET payload = '{"changed":true}'""",
+                        )
+                    }
                 }
                 publisher.confirm(claim) shouldBe true
                 publisher.confirm(claim) shouldBe false
@@ -237,7 +267,7 @@ class OutboxSpec :
                                 Callable {
                                     runCatching {
                                         fixture.transactor.inTransaction { tx ->
-                                            outbox.append(tx, testEvent(aggregate = "same"))
+                                            outbox.append(tx, testEvent(aggregate = "same").draft(), ::sequencePayload)
                                             firstPid.complete(fixture.pid(tx))
                                             check(release.await(20, TimeUnit.SECONDS))
                                             if (rollback) error("rollback first")
@@ -251,7 +281,7 @@ class OutboxSpec :
                                 Callable {
                                     fixture.transactor.inTransaction { tx ->
                                         secondPid.complete(fixture.pid(tx))
-                                        outbox.append(tx, testEvent(aggregate = "same"))
+                                        outbox.append(tx, testEvent(aggregate = "same").draft(), ::sequencePayload)
                                     }
                                 },
                             )
@@ -267,7 +297,14 @@ class OutboxSpec :
                             .record.event.aggregateId shouldBe "independent"
                         release.countDown()
                         holder.get(10, TimeUnit.SECONDS).isFailure shouldBe rollback
-                        waiter.get(10, TimeUnit.SECONDS).aggregateSequence shouldBe if (rollback) 1L else 2L
+                        val waited = waiter.get(10, TimeUnit.SECONDS)
+                        waited.aggregateSequence shouldBe if (rollback) 1L else 2L
+                        waited.event.payload["sequence"]!!
+                            .jsonPrimitive.long shouldBe waited.aggregateSequence
+                        fixture.dataSource
+                            .strings(
+                                "SELECT (payload->>'sequence')::bigint = aggregate_sequence FROM commerce.outbox_events WHERE aggregate_id = 'same'",
+                            ).all { it == "t" } shouldBe true
                         publisher
                             .claim(10, Duration.ofMinutes(1))
                             .single()
@@ -308,7 +345,7 @@ class OutboxSpec :
                 pool.execute("INSERT INTO commerce.principals VALUES ('USER', '$id', 'ACTIVE')")
                 MigrationLifecycle(pool).migrate()
                 MigrationLifecycle(pool).validate()
-                pool.appliedVersions("commerce") shouldContainExactly listOf("1", "2")
+                pool.appliedVersions("commerce") shouldContainExactly listOf("1", "2", "3")
                 pool.strings("SELECT principal_id FROM commerce.principals").single() shouldBe id.toString()
                 pool.strings("SELECT DISTINCT table_schema FROM information_schema.tables WHERE table_name LIKE 'outbox_%'") shouldBe
                     listOf("commerce")
@@ -318,8 +355,8 @@ class OutboxSpec :
         test("invalid envelopes and timing policy fail before persistence or startup") {
             val event = testEvent()
             shouldThrow<IllegalArgumentException> { event.copy(schemaVersion = 0) }
-            shouldThrow<IllegalArgumentException> { event.copy(payload = "secret\u0000data") }
-            shouldThrow<IllegalArgumentException> { event.copy(payload = "\uD800") }
+            shouldThrow<IllegalArgumentException> { event.copy(payload = buildJsonObject { put("value", "secret\u0000data") }) }
+            shouldThrow<IllegalArgumentException> { event.copy(payload = buildJsonObject { put("value", "\uD800") }) }
             shouldThrow<IllegalArgumentException> { event.copy(producerId = " other ") }
             shouldThrow<IllegalArgumentException> { event.copy(occurredAt = Instant.EPOCH.plusNanos(1)) }
             shouldThrow<IllegalArgumentException> { OutboxDispatchSettings(batchSize = 0) }
@@ -345,7 +382,7 @@ internal fun testEvent(
         "RecordSaved",
         1,
         "events.records",
-        payload,
+        Json.parseToJsonElement(payload).jsonObject,
         Instant.EPOCH,
     )
 

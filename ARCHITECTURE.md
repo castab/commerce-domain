@@ -286,6 +286,27 @@ It should also retain sufficient history and provenance to answer:
 
 Analytics requirements alone should not distort the operational domain model.
 
+## Transactional integration events
+
+The runtime outbox owns transactional aggregate sequence allocation and immutable JSON
+object persistence in PostgreSQL JSONB. Applications own event schemas, business meaning,
+and transport adapters. Sequence-aware append invokes a synchronous deterministic payload
+factory with the allocated sequence inside the caller's transaction, before inserting once.
+Business writes, the counter, and event content commit or roll back together.
+
+JSONB is the durable content authority. Producer formatting, key ordering, and numeric
+spelling are not preserved. Publication uses the persisted JSONB text unchanged as UTF-8,
+never current business state or transport-time enrichment. Published migrations remain
+history: V3 converts V2 text; invalid JSON and non-object legacy content fail explicitly.
+
+Events should carry enough facts to interpret their intended meaning independently of
+prior delivery. Occurrence time and aggregate sequence establish temporal context; they
+do not require consumers to replay every predecessor. Consumers handle duplicates and
+out-of-order delivery durably, deciding whether to apply history, ignore stale snapshots,
+record unique financial facts, or reconcile current authoritative state. The runtime
+remains transport-independent coordination, without business workflows, event sourcing,
+consumer projections, or a schema registry.
+
 ---
 
 # 12. Shared State Must Have One Owner
