@@ -246,6 +246,99 @@ operation              orchestration and policy; opens the transaction
 Routes contain no SQL and no orchestration. Operations contain no HTTP. Repositories
 never open their own transactions.
 
+### Operation attribution and trusted internal execution
+
+Operations already support direct calls: `context.financialLedger`, `context.transactor`,
+and transaction-taking repository methods require no authenticated principal. Factories in
+`ApplicationContributions.backgroundServices` receive that same `CommerceRuntimeContext`.
+An embedded consumer can therefore call the application's operation directly, sharing
+business logic and transactions with HTTP. No additional composition API is required.
+
+`runtime.operation.OperationOrigin` supplies optional, explicit provenance for applications
+that need it: `Principal(principalId)` or `Internal(component)`. It is immutable metadata,
+not evidence of authentication, a permission grant, or a capability token. Constructing
+either variant performs no lookup and grants no authority. Applications own audit storage;
+the runtime adds no audit tables, serializers, endpoint, or principal kind.
+
+| Concern | External principal | Trusted internal component |
+|---|---|---|
+| Authentication | Required at protected boundaries | No self-authentication |
+| Database principal | USER or SERVICE | Not required |
+| Session or access token | Depends on transport | Not required |
+| RBAC | Existing live permission model | Application-controlled trusted execution |
+| Operation attribution | Principal identity | Stable component identity |
+| Business validation | Required | Required |
+| Transaction guarantees | Preserved | Preserved |
+
+The following application composition sketch uses the same application-owned `operation`
+and `decodeAndValidate` function for both paths:
+
+```kotlin
+import io.github.castab.commerce.runtime.http.authenticatedPrincipal
+import io.github.castab.commerce.runtime.operation.InternalComponentId
+import io.github.castab.commerce.runtime.operation.OperationOrigin
+import org.http4k.core.HttpHandler
+import org.http4k.core.Response
+import org.http4k.core.Status
+import org.http4k.core.then
+
+// access is AccessControl bound to context.authorization; createPermission is catalog-defined.
+val handler: HttpHandler = { request ->
+    operation.execute(
+        decodeAndValidate(request.bodyString()),
+        OperationOrigin.Principal(authenticatedPrincipal(request)),
+    )
+    Response(Status.NO_CONTENT)
+}
+val protectedHandler = access.requirePermission(createPermission).then(handler)
+
+// Capture this constant in the deliberately wired background-service callback.
+val intakeOrigin = OperationOrigin.Internal(InternalComponentId("example.inquiry-intake"))
+val onMessage: (String) -> Unit = { payload ->
+    operation.execute(decodeAndValidate(payload), intakeOrigin)
+}
+```
+
+`InternalComponentId.value` accepts 1–128 characters: lowercase ASCII alphanumeric segments
+separated by dots, with single hyphens or underscores within segments. Invalid values are
+rejected, never trimmed or normalized. Choose a name stable across restarts and releases;
+application audit readers own historical naming if a component is renamed.
+
+Do not accept origin selection from headers, query parameters, JSON, or event payloads.
+The application chooses each entry path at composition, after assessing its trust boundary.
+An internal origin does not make a message trustworthy: validate contents and enforce
+business policy, idempotency, financial invariants, and atomic writes on both paths. Never
+implement an `if (origin is Internal)` authorization bypass. Origins are explicit operation
+inputs only where needed; existing runtime operation signatures are unchanged.
+
+External workers, BFFs, and other remote services continue using service authentication
+and live RBAC. Internal execution does not replace `ServiceCredentials`, `ServiceAccessTokens`,
+sessions, or `AccessControl`.
+
+#### Fiona adoption guide
+
+1. Upgrade to the runtime release containing `OperationOrigin` and `InternalComponentId`.
+   This is additive; existing consumers require no source or database changes.
+2. Give the shared Fiona inquiry operation an explicit `OperationOrigin` input for audit
+   attribution. Keep inquiry validation, idempotency, financial writes, and outbox append in
+   its existing shared transaction. Audit writes must join that transaction too.
+3. Keep the external inquiry HTTP route protected with its existing SERVICE authentication
+   and `AccessControl` permission. Derive `OperationOrigin.Principal` from the authenticated
+   request; never deserialize it from the caller. Preserve any endpoint-specific SERVICE rule.
+4. In the embedded consumer's `backgroundServices` factory, capture
+   `OperationOrigin.Internal(InternalComponentId("fionas.inquiry-intake"))` and call that same
+   operation directly. Remove its configured-author principal/status/role lookups and
+   `FIONAS_INTAKE_AUTHOR_SERVICE_ID` requirement. Do not simply remove authorization from
+   externally reachable call paths; place those checks at their authenticated boundary.
+5. Migrate Fiona-owned audit storage before writing internal origins: represent INTERNAL
+   with a component name and PRINCIPAL with USER/SERVICE plus ID, enforcing mutually
+   exclusive fields. Preserve historical SERVICE attribution as recorded; do not relabel
+   old facts or invent a service foreign key. Runtime principal tables are unchanged.
+6. Preserve NATS broker authentication, input validation, retry/acknowledgment protections,
+   and deduplication. Test both entry paths, rejected external requests, and atomic rollback.
+   Retire obsolete internal-only service credentials or roles only after checking they have
+   no remaining external consumers. These Fiona changes are a separate application change.
+
 ### Packages
 
 | Package (`io.github.castab.commerce.runtime...`) | Contents |
@@ -257,7 +350,7 @@ never open their own transactions.
 | `runtime.authorization` | `AuthorizationDirectory`, `PermissionCatalog`, `RuntimePermissions` and `commercePermissionDefinitions`, and the opt-in authorization administration (including service credential administration), permission catalog, and current principal HTTP capabilities and DTOs. |
 | `runtime.serviceauth` | `ServiceCredentials`, `ServiceCredential`, `ServiceCredentialSecret`, `ServiceAccessTokens`, `ServiceAccessToken`, `ServiceAccessTokenAuthenticator`, `serviceAccessTokenAuthentication`, the token endpoint capability, DTOs, and `serviceAccessTokenOpenApiSecurity`. |
 | `runtime.session` | `SessionManager`, `PrincipalSession`, `SessionId`, `SessionToken`, `IssuedSession`, token extractors (`BearerSessionToken`, `SessionCookie`), `SessionAuthenticator`, and the `sessionAuthentication` filter. |
-| `runtime.operation` | Support for operations (use cases such as issuing an invoice or recording a payment): `CommerceFailure`, the expected failures of operations, and `validating`. |
+| `runtime.operation` | `CommerceFailure`, `validating`, and explicit attribution through `OperationOrigin` and `InternalComponentId`. |
 | `runtime.http` | `CommerceJson`, `jsonBody`, the error contract and `CommerceErrorHandling` filter, health routes, the `authenticatedPrincipal` request lens, authentication composition (`RequestAuthenticator`, `authentication`), and the authorization filters (`requirePermission`, `requireAuthenticatedPrincipal`, `AccessControl`). |
 
 Booking orchestration will appear when it has a concrete generic use case.
@@ -1889,6 +1982,11 @@ configuration constructed in Kotlin (repeated-byte, short, or non-base64 keys, b
 padded issuers, out-of-range lifetimes, and general settings) before it touches the
 database, and `CommerceRuntimeConfigurationSpec` covers the required issuer in every
 file and environment combination.
+
+`OperationOriginSpec` verifies stable validated component names, preservation of USER/SERVICE
+identity, and direct internal invocation without a principal directory. Its test application
+shares validation across internal and protected HTTP entry paths, rejecting missing/invalid
+credentials and insufficient live permissions even when requests supply forged origin metadata.
 
 Database specs run against a real PostgreSQL 18 that the build starts through the Docker CLI.
 See [Building and testing](../README.md#building-and-testing).
