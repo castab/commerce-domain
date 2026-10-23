@@ -75,8 +75,8 @@ publishing {
                     "HikariCP, JDBI, and Flyway, Hoplite/HOCON configuration, explicit " +
                     "transactions, immutable financial snapshots, payment allocations, and refunds, " +
                     "derived reconciliation, a consistent HTTP error contract, authenticated principal sessions, " +
-                    "service credentials and short-lived service access tokens, permission enforcement, and " +
-                    "explicit composition."
+                    "service credentials and short-lived service access tokens, permission enforcement, " +
+                    "operation attribution, and explicit composition."
             }
         }
     }

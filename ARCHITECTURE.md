@@ -404,6 +404,13 @@ Avoid authorization models based on:
 
 Authorization decisions should be explicit and permission-driven.
 
+Authentication protects external trust boundaries. Trusted components deliberately wired
+inside an application may invoke its operations directly without authenticating to their
+own process. Applications own those trusted entry paths and the policy they apply.
+Execution attribution describes which principal or internal component initiated work;
+it proves no identity and grants no authority. Untrusted inputs must never select trusted
+execution. Both entry paths preserve the same business invariants and transaction guarantees.
+
 ---
 
 # 17. Current Permissions and Authorization Administration Are Different Concerns

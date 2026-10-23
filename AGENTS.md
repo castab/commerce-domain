@@ -556,6 +556,23 @@ hierarchy in this version.
   CSRF handling, or application-specific cookie names or roles to the runtime. Human
   credentials remain application-owned.
 
+## Operation attribution and trusted internal execution
+
+`runtime.operation.OperationOrigin` describes provenance only: `Principal(PrincipalId)`
+or `Internal(InternalComponentId)`. It grants no authority and proves no authentication.
+The validated component name is application-chosen, stable, and never a persisted
+principal. USER and SERVICE remain the only authenticated principal kinds.
+
+Trusted in-process components invoke application operations directly using the existing
+context and transaction APIs; no self-authentication or service registration is required.
+Applications deliberately wire trusted entry paths and retain all business validation,
+idempotency, and transactional safeguards. External paths still authenticate and authorize
+through `AccessControl` and live permissions. Never branch into trusted execution from
+untrusted origin metadata, add `runAsSystem`/bypass flags, or use origins as permission
+grants. Applications own audit storage and any mapping from origins to their history.
+Fiona's embedded inquiry consumer needs this vocabulary to share an operation with HTTP
+without inventing a SERVICE author. No context member, audit subsystem, or migration is needed.
+
 ## Service authentication in the runtime
 
 Service authentication is runtime-owned, decided by the maintainer for backend-for-frontend
@@ -716,7 +733,7 @@ booking lifecycle itself, it probably does not belong in the booking lifecycle A
 | `runtime/src/main/kotlin/io/github/castab/commerce/runtime/authorization/` | Live authorization directory; `PermissionCatalog.kt` (the catalog, its revision, `RuntimePermissions`, and `commercePermissionDefinitions`); the administration (including service credential administration), permission catalog, and current principal HTTP capabilities and DTOs. |
 | `runtime/src/main/kotlin/io/github/castab/commerce/runtime/serviceauth/` | Service authentication: `ServiceCredential`, `ServiceCredentialId`, `ServiceCredentialSecret`, `IssuedServiceCredential`, the internal Argon2id `ServiceCredentialHash`, `ServiceCredentials` and its internal PostgreSQL implementation, `ServiceAccessTokens` (`ServiceAccessToken`, the internal Nimbus `SignedServiceAccessTokens`, `ServiceAccessTokenAuthenticator`), DTOs, the token endpoint capability, and `serviceAccessTokenOpenApiSecurity`. The internal `persistence/ServiceCredentialRepository` stores credentials. |
 | `runtime/src/main/kotlin/io/github/castab/commerce/runtime/session/` | `PrincipalSession`, `SessionId`, `IssuedSession`, `SessionToken` (and the internal `SessionTokenDigest`), `SessionManager` and its internal PostgreSQL implementation, and `SessionAuthentication.kt` (token extractors, `SessionCookie`, `SessionAuthenticator`, `sessionAuthentication`). |
-| `runtime/src/main/kotlin/io/github/castab/commerce/runtime/operation/` | Operation support: `CommerceFailure` and `validating`. |
+| `runtime/src/main/kotlin/io/github/castab/commerce/runtime/operation/` | Operation support: `CommerceFailure`, `validating`, `OperationOrigin`, and `InternalComponentId`. |
 | `runtime/src/main/kotlin/io/github/castab/commerce/runtime/http/` | `CommerceJson`, the error contract and filter, health routes, `Authentication.kt` (`RequestAuthenticator`, `authentication`), and `Authorization.kt` (the `authenticatedPrincipal` lens, `requirePermission`, `requireAuthenticatedPrincipal`, `AccessControl`). |
 | `runtime/src/main/resources/` | Runtime migrations only: `db/commerce/V1__commerce_baseline.sql` and additive `V2__transactional_outbox.sql`, `V3__outbox_jsonb_payload.sql`. No deployment or logging configuration. |
 | `runtime/src/test/kotlin/io/github/castab/commerce/runtime/` | Kotest specs for configuration, errors, health, serialization, persistence and transactions, the migration contract (`persistence/MigrationLifecycleSpec`, `CommerceRuntimeStartupSpec`), and `CommerceRuntimeSpec` (the runtime composed with explicit contributions and an application-owned table, over real HTTP); `testing/TestDatabase.kt` and `testing/Databases.kt`. |
