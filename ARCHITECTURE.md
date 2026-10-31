@@ -455,6 +455,14 @@ At the same time, application business endpoints should express application busi
 
 HTTP behavior is part of the platform contract.
 
+Native SSE is a runtime transport capability on the same HTTP listener. Applications own
+subscription meaning, authorization policy and notification production. Pre-stream rejection
+retains the ordinary HTTP error contract; committed streams terminate on failure rather than
+pretending to change HTTP status. Runtime shutdown stops admission and allows managed
+application writers to stop before closing native transport resources and the shared pool.
+The pinned adapter integration and its real-socket verification are documented in
+[`runtime/NATIVE_SSE.md`](runtime/NATIVE_SSE.md).
+
 Treat as intentional:
 
 - paths;

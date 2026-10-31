@@ -51,7 +51,7 @@ concrete commerce application    (the consuming project)
    and it knows nothing about HTTP, databases, serialization, or frameworks.
 2. **Runtime.** `commerce-runtime` is the opinionated, reusable machinery from which a
    commerce application is assembled: operations, transactions, PostgreSQL persistence,
-   HTTP on http4k and Jetty, errors, health, the configuration model and its loader,
+   HTTP and native SSE on one http4k/JettyLoom listener, errors, health, the configuration model and its loader,
    application contribution points, append-only
    financial-document snapshot persistence, payment records and allocations, refunds and refund allocations, derived
    ledger reconciliation, and
@@ -81,6 +81,12 @@ concrete commerce application    (the consuming project)
    lifecycle, its deployment configuration (`application.conf` and environment), and its
    logging backend (an SLF4J provider such as Logback) and logging configuration, and it
    creates and starts the runtime.
+
+Applications may contribute native `RoutingSseHandler`s through `ApplicationContributions.sseRoutes`.
+Pre-stream authentication and validation use the existing HTTP error contract; applications
+own bounded subscriptions and writers, while the runtime owns admission and transport shutdown.
+See the [SSE adoption example](runtime/README.md#native-server-sent-events) and
+[pinned-adapter decision](runtime/NATIVE_SSE.md).
 
 ```text
                     CONCRETE APPLICATION
