@@ -29,6 +29,8 @@ dependencies {
     // Types from these libraries appear in the public runtime API (routes, handlers,
     // JSON lenses, transactions, the connection pool), so consumers compile against them.
     api(libs.http4k.core)
+    // Native SSE handlers and messages are part of ApplicationContributions.
+    api(libs.http4k.realtime.core)
     api(libs.http4k.api.openapi)
     api(libs.http4k.format.kotlinx.serialization)
     api(libs.kotlinx.serialization.json)
@@ -74,7 +76,8 @@ publishing {
                     "commerce-domain: http4k on Jetty, kotlinx.serialization, PostgreSQL through " +
                     "HikariCP, JDBI, and Flyway, Hoplite/HOCON configuration, explicit " +
                     "transactions, immutable financial snapshots, payment allocations, and refunds, " +
-                    "derived reconciliation, a consistent HTTP error contract, authenticated principal sessions, " +
+                    "derived reconciliation, native SSE alongside HTTP, a consistent HTTP error contract, " +
+                    "authenticated principal sessions, " +
                     "service credentials and short-lived service access tokens, permission enforcement, " +
                     "operation attribution, and explicit composition."
             }

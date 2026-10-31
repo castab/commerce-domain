@@ -261,8 +261,9 @@ replace their business correctness policies.
 is included. Any future retention policy must retain all unpublished events and counters.
 
 Managed background-service factories receive the existing context and construct without
-starting work. Start HTTP then services; stop HTTP, close services in reverse order, then
-close the pool. Clean up partial construction/start, attempt every cleanup despite errors,
+starting work. Start HTTP then services; stop admission, close services in reverse order,
+and close the pool last. With SSE, cancel application writers before stopping Jetty;
+HTTP-only runtimes stop Jetty before services. Clean up partial construction/start, attempt every cleanup despite errors,
 and preserve suppressed failures. `close` is bounded, idempotent, and valid before start.
 The runtime still owns no process, shutdown hook, default service, or general scheduler.
 
@@ -332,6 +333,38 @@ propagation, savepoint, or row-locking abstractions.
 
 ## Runtime opinionation
 
+### Native SSE transport
+
+`ApplicationContributions.sseRoutes` was added for `fionas-commerce`'s native timeline
+subscription endpoint; HTTP routing alone could not mount native SSE. It returns native
+`RoutingSseHandler`s from the same context, defaults to empty, and is appended after existing
+constructor parameters. `http4k-realtime-core` is an `api` dependency at the existing pinned
+http4k version. No Jetty infrastructure types are exposed. No domain or persistence change.
+
+HTTP and SSE share one JettyLoom server via `PolyHandler`. Keep `CommerceRuntime.http` as
+ordinary HTTP. GET plus explicit event-stream acceptance enters native routing; unmatched
+routes and other methods fall through to HTTP. Never emulate SSE with pipes or manually
+framed `Body(InputStream)` responses. Use `sseHandshake` with existing HTTP security filters
+and perform validation before returning the native response. It preserves rejection bodies
+through `CommerceErrorHandling` without running authentication twice. The narrow internal
+fallback bridge depends on the pinned Jetty sequence invoking SSE then HTTP synchronously;
+re-audit it on adapter upgrades. No authorization identity is kept in thread-local state.
+See [the decision](runtime/NATIVE_SSE.md).
+
+Consumers register bounded work and return promptly; initial consumer exceptions close the
+committed stream. Applications own writers, subscriptions, capacity, deadlines, revalidation,
+and notification policy. Native writes can block: never fan out writes serially from a shared
+publisher, write on the adapter callback, or keep a transaction open for a connection.
+For SSE-enabled runtimes, stop admission first, close services in reverse order so they cancel
+and join writers, stop Jetty and its remaining native streams, and close the pool last.
+HTTP-only ordering stays unchanged. Cleanup still attempts all resources and suppresses
+secondary failures. Service and onClose callbacks must be bounded and safe before start.
+Do not add a runtime scheduler or connection registry for application notification policy.
+Real Jetty socket tests, including two streams, a blocked reader, normal HTTP traffic and
+bounded shutdown, are required; handler-level tests cannot prove isolation.
+
+### HTTP and composition conventions
+
 It is acceptable, and intended, for `commerce-runtime` to establish conventions around
 http4k, Jetty, PostgreSQL, JDBI, Flyway, kotlinx.serialization, Hoplite, transactions, and
 HTTP behavior. Do not weaken useful abstractions to support hypothetical alternative
@@ -362,7 +395,7 @@ frameworks. The runtime rules are:
 ## Provisional application-extension seam
 
 `ApplicationContributions` (application migrations, meaning the application-owned schema and
-the Flyway locations, plus routes and permission definitions) and `CommerceRuntimeContext` (the
+the Flyway locations, plus HTTP/SSE routes, permission definitions, and managed services) and `CommerceRuntimeContext` (the
 configuration, `Transactor`, financial-document and payment repositories,
 `FinancialLedger`, `SessionManager`, authorization directory, `ServiceCredentials`, and
 `ServiceAccessTokens` handed to contributed routes) are
@@ -1476,7 +1509,7 @@ published POM and module metadata must never select a provider (check with
 `./gradlew :runtime:dependencies --configuration runtimeClasspath`). A library whose
 types appear in the runtime's public
 API is an `api` dependency; everything else is `implementation` or `runtimeOnly`. The
-current `api` set (http4k core and its kotlinx-serialization format, kotlinx.serialization,
+current `api` set (http4k core, realtime core for native SSE, and its kotlinx-serialization format, kotlinx.serialization,
 JDBI, HikariCP) is deliberate but revisitable. Do not grow it casually; see
 [Provisional application-extension seam](#provisional-application-extension-seam). Never
 add Spring, Spring Boot, Hibernate, JPA, Micronaut, Quarkus, Ktor, a dependency-injection

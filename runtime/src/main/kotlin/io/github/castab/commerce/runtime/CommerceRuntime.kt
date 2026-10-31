@@ -8,7 +8,9 @@ import io.github.castab.commerce.runtime.config.CommerceRuntimeConfiguration
 import io.github.castab.commerce.runtime.config.CommerceRuntimeConfiguration.Migrations.OnStartup
 import io.github.castab.commerce.runtime.financial.FinancialLedger
 import io.github.castab.commerce.runtime.http.CommerceErrorHandling
+import io.github.castab.commerce.runtime.http.QuiescingSseServer
 import io.github.castab.commerce.runtime.http.healthRoutes
+import io.github.castab.commerce.runtime.http.nativeSseServer
 import io.github.castab.commerce.runtime.outbox.Outbox
 import io.github.castab.commerce.runtime.persistence.ApplicationMigrations
 import io.github.castab.commerce.runtime.persistence.AuthorizationRepository
@@ -33,6 +35,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import org.http4k.core.HttpHandler
 import org.http4k.core.then
 import org.http4k.routing.RoutingHttpHandler
+import org.http4k.routing.RoutingSseHandler
 import org.http4k.routing.routes
 import org.http4k.server.Http4kServer
 import org.http4k.server.JettyLoom
@@ -121,12 +124,16 @@ class CommerceRuntimeContext internal constructor(
  * @property backgroundServices Factories constructed after routes, without starting work.
  *   Services start with the runtime and close in reverse order before its pool. Added for
  *   fionas-commerce's opt-in outbox dispatcher; factories clean up their own failed construction.
+ * @property sseRoutes Native SSE routes on the same listener, built from the same context.
+ *   Use `sseHandshake` to apply existing HTTP authentication/authorization filters before
+ *   streaming. Consumers register bounded application-owned work and return promptly.
  */
 class ApplicationContributions(
     val migrations: ApplicationMigrations? = null,
     val routes: (CommerceRuntimeContext) -> List<RoutingHttpHandler> = { emptyList() },
     val permissionDefinitions: List<PermissionDefinition> = emptyList(),
     val backgroundServices: List<(CommerceRuntimeContext) -> ManagedBackgroundService> = emptyList(),
+    val sseRoutes: (CommerceRuntimeContext) -> List<RoutingSseHandler> = { emptyList() },
 )
 
 /**
@@ -134,8 +141,9 @@ class ApplicationContributions(
  * serving it, and the connection pool.
  *
  * The runtime manages these resources; it does not own the process. [start] starts Jetty
- * and contributed background services and returns immediately. [close] stops the server,
- * closes services in reverse order, and closes the pool. Blocking,
+ * and contributed background services and returns immediately. [close] stops admission,
+ * closes services in reverse order, and closes the pool after the server stops. With SSE,
+ * services cancel writers before Jetty closes streams. Blocking,
  * shutdown hooks, and the rest of the process lifecycle belong to the application's own
  * `main`.
  */
@@ -173,7 +181,7 @@ class CommerceRuntime internal constructor(
     /** The port being served; the actual port after [start] when the configured port is 0. */
     fun port(): Int = server.port()
 
-    /** Stops HTTP, closes services in reverse order, then the pool, even if cleanup fails. */
+    /** Stops admission and resources, with the pool last, even if cleanup fails. */
     @Synchronized
     override fun close() {
         if (closed) return
@@ -261,7 +269,13 @@ fun commerceRuntime(
 
         val runtimeRoutes = listOf(healthRoutes(ready = { dataSource.isReachable() }))
         val http = CommerceErrorHandling.then(routes(*(runtimeRoutes + application.routes(context)).toTypedArray()))
-        server = http.asServer(JettyLoom(configuration.server.port))
+        val sseRoutes = application.sseRoutes(context)
+        server =
+            if (sseRoutes.isEmpty()) {
+                http.asServer(JettyLoom(configuration.server.port))
+            } else {
+                nativeSseServer(http, sseRoutes, configuration.server.port)
+            }
         application.backgroundServices.forEach { backgroundServices.add(it(context)) }
         return CommerceRuntime(http, server, dataSource, backgroundServices.toList())
     } catch (e: Throwable) {
@@ -288,8 +302,14 @@ private fun closeRuntimeResources(
             if (failure == null) failure = e else failure.addSuppressed(e)
         }
     }
-    release { server?.stop() }
-    services.asReversed().forEach { service -> release { service.close() } }
+    if (server is QuiescingSseServer) {
+        release { server.stopAccepting() }
+        services.asReversed().forEach { service -> release { service.close() } }
+        release { server.stop() }
+    } else {
+        release { server?.stop() }
+        services.asReversed().forEach { service -> release { service.close() } }
+    }
     release { dataSource.close() }
     failure?.let { throw it }
 }

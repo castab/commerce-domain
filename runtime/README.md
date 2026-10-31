@@ -35,8 +35,9 @@ concrete commerce application   (owns main() and the process)
 - **provides opinionated HTTP and persistence infrastructure:** http4k on Jetty,
   kotlinx.serialization, HikariCP, JDBI, PostgreSQL, and Flyway.
 - **starts and manages runtime resources when a concrete application invokes it.**
-  `start()` starts Jetty and opt-in background services; `close()` stops HTTP, closes
-  those services in reverse order, and closes the connection pool.
+  `start()` starts Jetty and opt-in background services; `close()` stops admission, closes
+  those services in reverse order, and closes the connection pool last. When SSE is enabled,
+  services cancel writers before Jetty terminates streams and stops.
 - **does not own the surrounding process or application lifecycle.** It installs no
   shutdown hook, never blocks the calling thread, and parses no command line. Those
   belong to the application's `main`.
@@ -107,7 +108,7 @@ Nothing after the migration phase is built until it succeeds. See
 
 The server and contributed background services are created without starting work.
 `CommerceRuntime.start()` starts them and returns immediately. `CommerceRuntime.close()`
-stops HTTP, closes services in reverse order, and closes the pool.
+stops admission, closes services in reverse order, and closes the pool after Jetty stops.
 `CommerceRuntime.http` is the complete HTTP handler, usable without a server.
 
 ### Application contributions
@@ -130,10 +131,84 @@ commerce-runtime
 `ApplicationContributions` is intentionally small and not booking-specific. An
 application contributes its own migrations (the PostgreSQL schema it owns and the Flyway
 locations of its scripts, never the runtime's), its own routes, software-defined
-`permissionDefinitions`, and optional `backgroundServices`. Routes and service factories are built from
+`permissionDefinitions`, optional `sseRoutes`, and optional `backgroundServices`. Routes and service factories are built from
 the shared `CommerceRuntimeContext`, which holds configuration, the `Transactor`, the
 `financialLedger`, `context.sessions`, and `context.authorization`. The
 runtime owns the error handling around every route.
+
+### Native Server-Sent Events
+
+`ApplicationContributions.sseRoutes: (CommerceRuntimeContext) -> List<RoutingSseHandler>`
+defaults to an empty list. It is appended to the constructor, preserving existing positional
+calls. Native SSE and ordinary HTTP share one `PolyHandler` and the existing JettyLoom
+listener. `CommerceRuntime.http` remains the ordinary HTTP handler; test SSE over sockets.
+Only GET requests explicitly accepting `text/event-stream` enter SSE routing. Other methods,
+ordinary clients, and unmatched SSE paths use the existing HTTP pipeline, including
+`/health`, `/ready`, and JSON errors.
+
+```kotlin
+import io.github.castab.commerce.runtime.ApplicationContributions
+import io.github.castab.commerce.runtime.http.AccessControl
+import io.github.castab.commerce.runtime.http.sseHandshake
+import io.github.castab.commerce.runtime.session.BearerSessionToken
+import io.github.castab.commerce.runtime.session.sessionAuthentication
+import org.http4k.routing.sse.bind
+import org.http4k.sse.SseMessage
+import org.http4k.sse.SseResponse
+
+// exampleRead is an application-defined PermissionKey included in permissionDefinitions.
+// updates is an application-owned managed service with bounded, cancellable writers.
+val application = ApplicationContributions(
+    permissionDefinitions = listOf(exampleReadDefinition),
+    sseRoutes = { context ->
+        val access = AccessControl(
+            sessionAuthentication(context.sessions, BearerSessionToken),
+            context.authorization,
+        )
+        listOf(
+            "/example/updates" bind sseHandshake(access.requirePermission(exampleRead)) { request ->
+                // Validate and load authorized resources here, in short operations.
+                SseResponse(headers = listOf("Cache-Control" to "no-store")) { stream ->
+                    // Register onClose cleanup, start bounded work, and return promptly.
+                    // Writers use stream.send(SseMessage.Event("changed", "data")),
+                    // and stream.close() when their lifetime ends.
+                    updates.open(stream)
+                }
+            },
+        )
+    },
+    backgroundServices = listOf({ updates }),
+)
+```
+
+`sseHandshake(Filter, SseHandler)` applies existing authentication/permission filters once.
+A short-circuit HTTP response retains its status, headers and body. Lens failures,
+`CommerceFailure`, and unexpected preparation exceptions use `CommerceErrorHandling`
+before any stream is committed. A native non-200 `SseResponse` is also rejected without
+activating its consumer; known error statuses get the existing JSON category with a generic
+message. Use the handshake for precise caller-safe errors. Only a 200 native response
+starts streaming. After commitment, an exception in the initial consumer is logged and
+the stream closes; later application writers must handle their own failures and close.
+No private error events are fabricated.
+
+The runtime exports `http4k-realtime-core:6.58.0.0` as an `api` dependency, so consumers
+need only their normal `commerce-runtime` dependency to import native SSE types. No version
+upgrade, migration, extra port, or second server is involved. Applications own subscription
+capacity, cancellation, bounded writer tasks, live authorization revalidation, absolute
+lifetimes, notification production, and proxy buffering settings. Never hold a database
+transaction open for a stream. A native send can block on a slow socket: do not write on
+the consumer callback, a shared notification publisher, or a database scanner. Register
+bounded independent writers and cancel/join them from the managed service's `close()`.
+
+For SSE-enabled runtimes, closing first rejects new work with 503, then closes managed
+services in reverse order, then stops Jetty (which closes remaining native streams), then
+closes the pool. Callbacks and service cleanup must be prompt and bounded. Repeated close
+and partial-start cleanup retain their existing behavior. HTTP-only shutdown is unchanged.
+The real-server `NativeSseSpec` exercises two open streams, delayed flushed events, ordinary
+HTTP/health/readiness deadlines, a genuinely blocked socket writer alongside a healthy
+subscriber, JSON handshake errors, and bounded shutdown. Handler-only tests cannot detect
+transport starvation. See [the adapter decision and adoption guide](NATIVE_SSE.md) for the
+pinned fallback mechanism, callback limitations, and release handoff.
 
 ### Application entities and the shared transaction
 
@@ -182,6 +257,7 @@ Some JDBI and HikariCP types are deliberately part of the public API:
 | `createDataSource(...)` | `com.zaxxer.hikari.HikariDataSource` | The runtime's connection pool, for application tooling that needs the same pool configuration. |
 
 For that reason `jdbi3-core` and `HikariCP` are `api` dependencies, alongside `http4k-core`,
+`http4k-realtime-core` (native SSE contributions),
 `http4k-format-kotlinx-serialization`, and `kotlinx-serialization-json`. This exposure
 follows from the opinionated PostgreSQL/JDBI stack and is **intentional but revisitable**.
 A later iteration may narrow it, for example by wrapping the handle in a commerce-owned
@@ -217,7 +293,7 @@ declared in [`gradle/libs.versions.toml`](../gradle/libs.versions.toml):
 | Concern | Choice |
 |---|---|
 | Language and platform | Kotlin 2.4.20 on Java 25 |
-| HTTP | http4k 6.58 on Jetty (`JettyLoom`, virtual threads; Jetty keeps Server-Sent Events possible) |
+| HTTP and SSE | http4k 6.58 on Jetty (`JettyLoom`, virtual threads and native Server-Sent Events) |
 | Serialization | kotlinx.serialization 1.11 through `http4k-format-kotlinx-serialization` |
 | Database | PostgreSQL (driver 42.7) through HikariCP 7.1 and JDBI 3.54 |
 | Migrations | Flyway 13.3 |
@@ -1041,7 +1117,8 @@ Factories must construct without starting work and clean up their own failed con
 Runtime composition closes previously constructed services if a later factory fails.
 Failed start closes all constructed services, including the partially started service.
 Close is idempotent, attempts every cleanup despite failures, and preserves suppressed
-cleanup errors. It stops HTTP first, services in reverse order next, and the pool last.
+cleanup errors. It stops admission first, services in reverse order next, and the pool last.
+With SSE, services cancel writers before Jetty stops; HTTP-only runtimes stop Jetty first.
 `ManagedBackgroundService.close()` must be bounded and safe before start or after failed
 start. An application supplying no services retains its HTTP/pool behavior. There is no
 global scheduler, deployment configuration file, process blocking, or shutdown hook.
@@ -1860,7 +1937,7 @@ transaction in which the application writes it.
   from those facts.
 - Payment-allocation-reversal persistence and orchestration are deferred.
 - No generic command idempotency keys, business event schemas, broker adapters,
-  Server-Sent Events, or general job scheduler. The opt-in transactional outbox coordinates
+  notification bus, or general job scheduler. The opt-in transactional outbox coordinates
   application-defined events and transports.
 - No payment provider integration. Providers (e.g. a future `stripe-adapter`) sit
   behind the provider-neutral contract in `commerce-domain`. This module will never
