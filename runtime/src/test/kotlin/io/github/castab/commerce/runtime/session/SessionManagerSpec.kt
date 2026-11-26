@@ -103,6 +103,28 @@ class SessionManagerSpec :
             sessions.resolve(issued.token) shouldBe principal
         }
 
+        test("describe reports when an active session authenticated, under the same rules as resolve") {
+            val principal = user()
+            val issued = sessions.create(principal)
+            val start = clock.now
+
+            clock.advance(Duration.ofMinutes(30))
+            sessions.describe(issued.token) shouldBe issued.session
+            sessions.describe(SessionToken.generate(java.security.SecureRandom())).shouldBeNull()
+
+            clock.advance(lifetime)
+            sessions.describe(issued.token).shouldBeNull()
+            clock.now = start
+
+            val revoked = sessions.create(principal).also { sessions.revoke(it.token) }
+            sessions.describe(revoked.token).shouldBeNull()
+
+            val disabled = user()
+            val disabledSession = sessions.create(disabled)
+            transactor.inTransaction { AuthorizationRepository().updateStatus(it, disabled, PrincipalStatus.DISABLED) }
+            sessions.describe(disabledSession.token).shouldBeNull()
+        }
+
         test("every session gets its own token and identity") {
             val principal = user()
 

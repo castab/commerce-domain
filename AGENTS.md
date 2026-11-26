@@ -548,6 +548,12 @@ hierarchy in this version.
 - **Expiry is fixed** (`sessions.lifetimeMinutes`) and judged by the runtime's clock,
   never the database clock. Do not add sliding expiry, refresh tokens, or JWTs
   incidentally.
+- **Authentication time is the session's `createdAt`.** Because expiry is fixed and nothing
+  refreshes a session, `SessionManager.describe(token)` (the active `PrincipalSession`
+  under exactly `resolve`'s rules) tells an application when its principal last proved
+  identity, so it can require recent authentication before sensitive changes. The
+  recency window and the step-up flow stay application-owned; do not add re-authentication
+  timestamps, "sudo" state, or step-up policy to the runtime.
 - **Principal persistence is an explicit, fail-closed contract.** commerce-runtime persists
   an explicit set of supported `PrincipalId` representations (`USER` and `SERVICE`, each
   with its UUID). Adding a `PrincipalId` subtype to commerce-domain does not make it
@@ -1743,7 +1749,7 @@ dependency just to support CI or publishing.
 - Session tests run against PostgreSQL and a hand-driven `MutableClock`, never the wall
   clock. Keep the security coverage: `SecureRandom` token generation, digest-only storage
   (checked in SQL), digest uniqueness, `UserId` and `ServiceId` round trips, expired,
-  revoked, unknown, and identifier-as-token rejection, `revokeAll` isolation, token-free
+  revoked, unknown, and identifier-as-token rejection, `describe` matching `resolve`, `revokeAll` isolation, token-free
   logs, `401` versus `403`, and authorization that follows permission changes during a
   session. `CommerceRuntimeSpec` keeps the end-to-end flow: the test application
   authenticates identity itself, issues a session through `context.sessions`, and recovers

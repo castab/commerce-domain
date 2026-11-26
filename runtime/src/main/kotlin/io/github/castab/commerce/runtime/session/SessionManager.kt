@@ -52,6 +52,18 @@ interface SessionManager {
      */
     fun resolve(token: SessionToken): PrincipalId?
 
+    /**
+     * The active session [token] authenticates, under exactly the rules of [resolve]: `null`
+     * when there is no such session, or it has expired or been revoked, or the principal is
+     * missing or disabled. Describing never extends a session.
+     *
+     * Because a session's lifetime is fixed and nothing refreshes it, its
+     * [PrincipalSession.createdAt] is the moment its principal proved identity. Applications
+     * use it to require recent authentication before sensitive changes (for example adding a
+     * credential); that policy and its window remain application-owned.
+     */
+    fun describe(token: SessionToken): PrincipalSession?
+
     /** Makes the session of [token] unusable immediately. Idempotent: an unknown, expired, or revoked token is ignored. */
     fun revoke(token: SessionToken)
 
@@ -107,11 +119,13 @@ internal class PersistentSessionManager(
         return IssuedSession(session, token)
     }
 
-    override fun resolve(token: SessionToken): PrincipalId? =
+    override fun resolve(token: SessionToken): PrincipalId? = describe(token)?.principalId
+
+    override fun describe(token: SessionToken): PrincipalSession? =
         transactor.inTransaction { transaction ->
             val session = repository.findByDigest(transaction, SessionTokenDigest.of(token)) ?: return@inTransaction null
-            session.principalId.takeIf {
-                session.isActive(now()) && principals.principalStatus(transaction, it) == PrincipalStatus.ACTIVE
+            session.takeIf {
+                it.isActive(now()) && principals.principalStatus(transaction, it.principalId) == PrincipalStatus.ACTIVE
             }
         }
 
